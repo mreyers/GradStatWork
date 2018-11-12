@@ -1,0 +1,152 @@
+---
+title: "Stat850 Assignment 4"
+author: "Matthew Reyers"
+date: "November 8, 2018"
+output: html_document
+---
+
+This report contains my code based submission for Assignment 4 of Stat 850. 
+
+Question 1: Consider the following model that I used in assignment 1:
+y = 10sin(4pi^0.9)exp(-1.5x) + 10 + epsilon, where epsilon follows a N(0, 4) distribution. I assume the 4 to be representative of the variance, meaning that the standard deviation is 2.
+
+This question will fit a GP to the 11 observations as in the assignment 1. Use a Gaussian process of the form given in the assignment question.
+```{r}
+# Step 0: set up as before
+set.seed(1)
+x <- seq(0, 1, by = 0.1)
+e <- rnorm(n = 11, sd = 2)
+
+y <- 10*sin(4*pi*x^0.9)*exp(-1.5*x) + 10 + e
+```
+
+a) Write a function or subroutine to compute the covariance between two observations.
+```{r}
+covCalcBasic <- function(x1, x2){
+  # Calculate the covariance between two given points
+  
+  # Get the y values
+  locx1 <- which(x == x1)
+  y1 <- y[locx1]
+  
+  locx2 <- which(x == x2)
+  y2 <- y[locx2]
+  
+  # Compute covariance between the y values
+  xvec <- c(x1, x2)
+  yvec <- c(y1, y2)
+  xbar <- mean(xvec)
+  ybar <- mean(yvec)
+  num <- sum((xvec - xbar)*(yvec - ybar)) # / (n-1) but n = 2
+  
+  
+  # Return results
+  return(num)
+}
+covCalc(0.4, 0.4)
+
+covCalcGaussian <- function(x1, x2, theta){
+  covPW <- exp(-theta * (x1 - x2) ^ 2) # 1 dimensional predictors, given theta
+  return(covPW)
+}
+```
+
+b) Write a function or subroutine to compute the covariance matrix for the vector of 11 observations
+```{r setup, include=FALSE}
+covMatrixCalcBasic <- function(fullX, fullY){
+  # Takes the two full vectors and calculates the covariance between the them pointwise
+  
+  # Create the matrix
+  nrow <- length(fullX)
+  ncol <- length(fullY)
+  if(nrow != ncol){
+    print("Not covariance function eligible")
+    return(NA)
+  }
+  
+  covMatrix <- matrix(0, nrow = nrow, ncol = ncol)
+  
+  # Fill the matrix with values
+  for(i in 1:nrow){
+    for(j in 1:ncol){
+      covMatrix[i, j] <- covCalc(x[i], x[j])
+    }
+  }
+  return(covMatrix)
+}
+
+myResult <- covMatrixCalc(x, y)
+myResult
+
+covMatrixGaussian <- function(fullX, fullY, theta){
+  
+  # Create the matrix
+  nrow <- length(fullX)
+  ncol <- length(fullY)
+  if(nrow != ncol){
+    print("Not covariance function eligible")
+    return(NA)
+  }
+  covMatrix <- matrix(0, nrow, ncol)
+  
+  # Fill the matrix with values
+  for(i in 1:nrow){
+    for(j in 1:ncol){
+      covMatrix[i, j] <- covCalcGaussian(x[i], x[j], theta)
+    }
+  }
+  return(covMatrix)  
+}
+covMatrixG <- covMatrixGaussian(x, y, theta = 2)
+```
+
+c) Compute the inverse of the covariance function
+```{r}
+# Note first that cov(z(xi), z(xj)) = sigma_z^2 * r(xi, xj) where r(xi, xj) is the squared exponential
+# I am also allowed to use 1 as the value for the variance components 
+# This simplifies cov(z(xi), z(xj)) = r(xi, xj) where r(xi, xj)
+invCov <- solve(covMatrixG)
+
+# Other theta test
+covMatrixTest <- covMatrixGaussian(x, y, theta = 2)
+
+```
+My first attempt to compute the inverse of the covariance matrix resulted in a singular problem and therefore non-invertibility. This occurred with theta = 1. After testing with a few other theta values, it seems that theta <= 1.5 (roughly, not fully verified) will generate non-invertability conditions. This is because the covariance function does not die off as quickly as necessary to avoid the collinearity amongst columns. Larger theta values seem to resolve this issue. 
+
+d) Write a function or subroutine to compute the log of the Gaussian likelihood for a Gaussian process
+```{r }
+likeFunction <- function(mu, theta ){
+  # Function calculates likelihood value given parameter values
+  covMatrix <- covMatrixGaussian(x, y, theta)
+  detSigma <- det(covMatrix)
+  invSigma <- solve(covMatrix)
+  exponent <- t(y - mu) %*% invSigma %*% (y - mu)
+  
+  likelihood <- 1 / sqrt(2* pi* detSigma)* exp(exponent)
+  
+  return(likelihood)
+}
+
+nllFunction <- function(mu, theta ){
+  # Function calculates likelihood value given parameter values
+  covMatrix <- covMatrixGaussian(x, y, theta)
+  detSigma <- det(covMatrix)
+  invSigma <- solve(covMatrix)
+  exponent <- t(y - mu) %*% invSigma %*% (y - mu)
+  
+  likelihood <- 1 / sqrt(2* pi* detSigma)* exp(exponent)
+  nll <- -1 * log(likelihood)
+  
+  return(nll)
+}
+```
+
+e) Maximize the log likelihood function
+We know the maximum likelihood of a Gaussian process for mu is the mean of the sample. We can then maximize the likelihood over a vector of thetas.
+```{r}
+vecTheta <- seq(1.5, 10, by = 0.1)
+library(stats4)
+mleResults <- mle(nllFunction, start = list(mu = y / length(y), theta = 2))
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
