@@ -154,11 +154,11 @@ nllFunction <- function(mu, sigmaz, sigmae, theta ){
   detSigma <- det(covMatrix)
   invSigma <- solve(covMatrix)
   muvec <- rep(mu, n = length(mu))
-  exponent <- t(y - mu) %*% invSigma %*% (y - mu)
+  exponent <- -1*t(y - mu) %*% invSigma %*% (y - mu) / 2
 
   # Likelihood and negative log likelihood
-  likelihood <- (1 / sqrt(2* pi* detSigma))^(n/2)* exp(exponent)
-  nll <- -1 * log(likelihood)
+  loglike <- log(1 / sqrt(2* pi* detSigma)) + exponent
+  nll <- -1 * loglike
   
   return(nll)
 }
@@ -166,17 +166,15 @@ nllFunction(mu = 1, theta = .55, sigmaz = 1, sigmae = 1)
 ```
 
 e) Maximize the log likelihood function
-We know the maximum likelihood of a Gaussian process for mu is the mean of the sample. We can then maximize the likelihood over a vector of thetas.
+We expect the mle for the mean of a Gaussian to be the mean of the sample and as such we will initialize the MLE conditions with mu = mean(y). I will then set theta to some initial value and allow it to vary. The following work is done with respect to sigmaz and sigmae being held fixed at 1 as per the example in the assignment. 
 ```{r}
-vecTheta <- seq(1.5, 10, by = 0.1)
 library(stats4)
-mleResults <- mle(nllFunction, start = list(mu = mean(y), theta = 2, sigmaz = 1, sigmae = 1), method = "CG")
-testoptim <- optim(list(mu = mean(y), theta = 2, sigmaz = 1, sigmae = 1), nllFunction, method = "Nelder-Mead", hessian = FALSE)
-test <- optim(par = c(0, 0, 0, 0, 0), nllFunction, method = "Nelder-Mead", hessian = FALSE)
+mleResults <- mle(nllFunction, start = list(mu = mean(y), theta = 2), fixed = list(sigmaz = 1, sigmae = 1))
 # Adjustment suggestions found here: https://stackoverflow.com/questions/28185387/non-finite-finite-difference-value-many-data-become-inf-and-na-after-exponentia
 ```
 
 f) Using a random sample 50 inputs between 0 and 1, predict the output at the 50 different inputs
+
 
 g) Compute (i) the maximum error over your 50 different inputs and (ii) the mean squared prediction error over your 50 different inputs
 
