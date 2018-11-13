@@ -12,6 +12,8 @@ y = 10sin(4pi^0.9)exp(-1.5x) + 10 + epsilon, where epsilon follows a N(0, 4) dis
 
 This question will fit a GP to the 11 observations as in the assignment 1. Use a Gaussian process of the form given in the assignment question.
 ```{r}
+library(tidyverse)
+
 # Step 0: set up as before
 set.seed(1)
 x <- seq(0, 1, by = 0.1)
@@ -174,4 +176,58 @@ test <- optim(par = c(0, 0, 0, 0, 0), nllFunction, method = "Nelder-Mead", hessi
 # Adjustment suggestions found here: https://stackoverflow.com/questions/28185387/non-finite-finite-difference-value-many-data-become-inf-and-na-after-exponentia
 ```
 
+f) Using a random sample 50 inputs between 0 and 1, predict the output at the 50 different inputs
 
+g) Compute (i) the maximum error over your 50 different inputs and (ii) the mean squared prediction error over your 50 different inputs
+
+h) How does this compare to the polynomial regression from assignment 1?
+
+2. A study was conducted to see if the height of a nest would impact the weights of baby birds. Nests were placed at different heights and the weights of baby birds one week after hatching were measured. The data are in the code below
+```{r}
+# Bird work
+Nest <- c(1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5)
+Height <- c(10, 10, 10, 10, 15, 15, 15, 15, 20, 20, 20)
+Weight <- c(7.5, 8.0, 7.1, 6.7, 9.1, 8.6, 9.6, 9.2, 9.9, 9.8, 10.2)
+birds <- data.frame(Nest, Height, Weight)
+```
+a) What model would you fit to these data?
+This situation involves an outcome (weight) and factors believed to possibly impact the outcome. The Nest factor represents a random factor as it is a variable we did not control for nor have a research question pertaining to. The Height factor is instead a fixed effect factor as we specifically changed the height of the nests and are looking to draw conclusions about these specific heights. The setup is suggestive of a Mixed Effects Model and is what I will implement to better understand the data.
+
+b) Fit the model and report your conclusions with respect to the scientific question of interest
+```{r}
+# Plot the data
+birds %>% ggplot(aes(factor(Height), Weight)) + 
+  geom_point() +
+  ggtitle("Plot of bird weight against nest height") +
+  theme_minimal()
+
+```
+Initial data plotting does not seem to indicate any excessive outliers or cause for concern about equal variance among groups. With no assumptions horribly violated, I will proceed with fitting my Mixed Effect Model.
+```{r}
+library(lme4)
+birds <- birds %>% mutate(Height = factor(Height),
+                 Nest = factor(Nest))
+linMixModel <- lmer(Weight ~ Height + (1 | Nest), data = birds, REML = FALSE)
+summary(linMixModel)
+plot(fitted(linMixModel), residuals(linMixModel), xlab = "Fitted values", ylab = "Residuals")
+
+# Slightly different Mixed model
+linRandSlope <- lmer(Weight ~ Height + (1 + Height | Nest), data = birds, REML = FALSE)
+summary(linRandSlope)
+
+# Compare the mixed effects
+anova(linMixModel, linRandSlope)
+
+# Out of curiosity, compare Mixed effects model to linear regression
+standardLM <- lm(Weight ~ Height + Nest, data = birds)
+summary(standardLM)
+BIC(standardLM)
+AIC(standardLM)
+```
+The Mixed Effect Model fit above suggests that the Fixed Effect Height and a non-zero intercept term constitute a useful model for understanding the weight of young birds. I would conclude that the Height of the nest has an effect on the weight of birds during development. Further, the fit indicated a small amount of the variation in Weight is attributable to the Random Effect Nest. This amount is nearly identical to the amount explained by noise and suggests that the random effect may not be necessary for the model.
+
+This version of the Mixed Effect Model can be refered to as a Random Intercept Model. Out of curiosity, I compared the results of the Random Intercept Model with those of a Random Slope Model and a basic linear regression. With respect to the Random Slope Model, the given anova comparison indicates that the two models are insignificantly different from each other in terms of fit. This suggests that we take the more parsimonious model to be our choice, this being the Random Intercept Model.
+
+Comparison with the linear regression equivalent (done by treating Nest as a regressor but not a random effect) yields a model that possesses similar AIC and BIC scores. The anova function is unable to compare across model types, such as Mixed Effect vs. Linear Regression, so our comparison toolkit is somewhat limited. As such I compared AIC and BIC scores of each model, finding the scores to be most similar to that of the Random Slope model while also bearing resemblance to the Random Intercept Model. Though the Random Intercept Model possesses slightly lower AIC and BIC values, the tendency to take the simpler model would suggest a linear regression model to be sufficient in this case.
+
+3. 
