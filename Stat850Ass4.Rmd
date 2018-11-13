@@ -20,6 +20,7 @@ x <- seq(0, 1, by = 0.1)
 e <- rnorm(n = 11, sd = 2)
 
 y <- 10*sin(4*pi*x^0.9)*exp(-1.5*x) + 10 + e
+yact <- 10*sin(4*pi*x^0.9)*exp(-1.5*x) + 10
 ```
 
 a) Write a function or subroutine to compute the covariance between two observations.
@@ -174,6 +175,48 @@ mleResults <- mle(nllFunction, start = list(mu = mean(y), theta = 2), fixed = li
 ```
 
 f) Using a random sample 50 inputs between 0 and 1, predict the output at the 50 different inputs
+```{r}
+set.seed(2)
+xstar <- runif(50)
+
+# Write new covariance matrix setup as prediction requires multiplication by sigmaz after choleski
+predCovMatrix <- function(fullX, theta){
+  print(theta)
+  nrow <- length(fullX)
+  print(nrow)
+  covMatrix <- matrix(0, nrow, nrow)
+  
+  # Fill the matrix with values
+  for(i in 1:nrow){
+    for(j in 1:nrow){
+      covMatrix[i, j] <- covCalcGaussian(fullX[i], fullX[j], theta)
+    }
+  }
+  return(covMatrix)
+}
+
+R <- predCovMatrix(xstar, mleResults@coef[[2]]) # Calculate covariance matrix at MLE, R
+L <- chol(R + diag(10^(-10), dim(R)[1])) # Take the Choleski decomposition
+L <- t(L) # Set L to be L transpose
+w <- as.matrix(rnorm(50)) # Generate the same number of random normals as we have predictions of interest
+sigma_z <- 1 # Using sigma_z fixed at 1
+z <- sigma_z * L %*% w
+
+# Prediction is now at muhat + z
+preds <- mleResults@coef[[1]] + z
+predData <- data.frame(xstar, preds)
+
+# Actual, for comparison
+actualData <- data.frame(x, yact)
+xAll <- seq(0, 1, 0.01)
+yFull <- 10*sin(4*pi*xAll^0.9)*exp(-1.5*xAll) + 10
+moreData <- data.frame(xAll, yFull)
+
+
+# Plot shows it is not currently working
+# Need to get the process to filter through the fixed points. Something a little funky
+predData %>% ggplot(aes(xstar, preds)) + geom_point() +ggtitle("Plot of predictions along GP using MLE results") + geom_point(data = moreData, aes(x = xAll, y = yFull, shape = "*", col = "red")) + geom_point(data = actualData, aes(x, yact, col = "blue"))
+```
 
 
 g) Compute (i) the maximum error over your 50 different inputs and (ii) the mean squared prediction error over your 50 different inputs
