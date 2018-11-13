@@ -43,9 +43,10 @@ covCalcBasic <- function(x1, x2){
   # Return results
   return(num)
 }
-covCalc(0.4, 0.4)
+covCalcBasic(0.4, 0.4)
 
 covCalcGaussian <- function(x1, x2, theta){
+  
   covPW <- exp(-theta * (x1 - x2) ^ 2) # 1 dimensional predictors, given theta
   return(covPW)
 }
@@ -69,16 +70,16 @@ covMatrixCalcBasic <- function(fullX, fullY){
   # Fill the matrix with values
   for(i in 1:nrow){
     for(j in 1:ncol){
-      covMatrix[i, j] <- covCalc(x[i], x[j])
+      covMatrix[i, j] <- covCalcBasic(x[i], x[j])
     }
   }
   return(covMatrix)
 }
 
-myResult <- covMatrixCalc(x, y)
+myResult <- covMatrixCalcBasic(x, y)
 myResult
 
-covMatrixGaussian <- function(fullX, fullY, theta){
+covMatrixGaussian <- function(fullX, fullY, sigmaz, sigmae, theta){
   
   # Create the matrix
   nrow <- length(fullX)
@@ -95,9 +96,11 @@ covMatrixGaussian <- function(fullX, fullY, theta){
       covMatrix[i, j] <- covCalcGaussian(x[i], x[j], theta)
     }
   }
-  return(covMatrix)  
+  sysCov <- sigmaz^2 * covMatrix + sigmae^2 * diag(dim(covMatrix)[1]) # Covariance of system depends on noise and signal
+  return(sysCov)  
 }
-covMatrixG <- covMatrixGaussian(x, y, theta = 2)
+covMatrixG <- covMatrixGaussian(x, y, 1, 1, theta = 2)
+
 ```
 
 c) Compute the inverse of the covariance function
@@ -108,37 +111,56 @@ c) Compute the inverse of the covariance function
 invCov <- solve(covMatrixG)
 
 # Other theta test
-covMatrixTest <- covMatrixGaussian(x, y, theta = 2)
+covMatrixTest <- covMatrixGaussian(x, y, sigmaz = 1, sigmae = 1, theta = 2)
 
 ```
 My first attempt to compute the inverse of the covariance matrix resulted in a singular problem and therefore non-invertibility. This occurred with theta = 1. After testing with a few other theta values, it seems that theta <= 1.5 (roughly, not fully verified) will generate non-invertability conditions. This is because the covariance function does not die off as quickly as necessary to avoid the collinearity amongst columns. Larger theta values seem to resolve this issue. 
+Update: My original covariance calculator was just for the correlation component, not scaled by sigmaz or added with sigmae scaled identity. I now no longer experience the same problems.
 
 d) Write a function or subroutine to compute the log of the Gaussian likelihood for a Gaussian process
 ```{r }
-likeFunction <- function(mu, theta ){
+likeFunction <- function(mu, theta, sigmaz, sigmae ){
   # Function calculates likelihood value given parameter values
-  covMatrix <- covMatrixGaussian(x, y, theta)
+  
+  # Covariance structure
+  covMatrix <- covMatrixGaussian(x, y, sigmaz, sigmae, theta)
+  n <- dim(covMatrix)[1]
+  sysCov <- sigmaz^2 * covMatrix + sigmae^2 * diag(n)
+  
+  # Likelihood components
   detSigma <- det(covMatrix)
   invSigma <- solve(covMatrix)
-  exponent <- t(y - mu) %*% invSigma %*% (y - mu)
+  muvec <- rep(mu, n = length(mu))
+  exponent <- t(y - muvec) %*% invSigma %*% (y - muvec)
   
-  likelihood <- 1 / sqrt(2* pi* detSigma)* exp(exponent)
+  # Likelihood
+  likelihood <- (1 / sqrt(2* pi* detSigma))^(n/2)* exp(exponent)
   
   return(likelihood)
 }
 
-nllFunction <- function(mu, theta ){
+
+nllFunction <- function(mu, sigmaz, sigmae, theta ){
   # Function calculates likelihood value given parameter values
-  covMatrix <- covMatrixGaussian(x, y, theta)
+  
+  # Covariance structure
+  covMatrix <- covMatrixGaussian(x, y, sigmaz, sigmae, theta)
+  n <- dim(covMatrix)[1]
+  sysCov <- sigmaz^2 * covMatrix + sigmae^2 * diag(n)
+  
+  # Log likelihood requirements
   detSigma <- det(covMatrix)
   invSigma <- solve(covMatrix)
+  muvec <- rep(mu, n = length(mu))
   exponent <- t(y - mu) %*% invSigma %*% (y - mu)
-  
-  likelihood <- 1 / sqrt(2* pi* detSigma)* exp(exponent)
+
+  # Likelihood and negative log likelihood
+  likelihood <- (1 / sqrt(2* pi* detSigma))^(n/2)* exp(exponent)
   nll <- -1 * log(likelihood)
   
   return(nll)
 }
+nllFunction(mu = 1, theta = .55, sigmaz = 1, sigmae = 1)
 ```
 
 e) Maximize the log likelihood function
@@ -146,7 +168,10 @@ We know the maximum likelihood of a Gaussian process for mu is the mean of the s
 ```{r}
 vecTheta <- seq(1.5, 10, by = 0.1)
 library(stats4)
-mleResults <- mle(nllFunction, start = list(mu = y / length(y), theta = 2))
+mleResults <- mle(nllFunction, start = list(mu = mean(y), theta = 2, sigmaz = 1, sigmae = 1), method = "CG")
+testoptim <- optim(list(mu = mean(y), theta = 2, sigmaz = 1, sigmae = 1), nllFunction, method = "Nelder-Mead", hessian = FALSE)
+test <- optim(par = c(0, 0, 0, 0, 0), nllFunction, method = "Nelder-Mead", hessian = FALSE)
+# Adjustment suggestions found here: https://stackoverflow.com/questions/28185387/non-finite-finite-difference-value-many-data-become-inf-and-na-after-exponentia
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
