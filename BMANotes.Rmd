@@ -33,11 +33,14 @@ Cool connections
  
 Challenges with BMA
 - Prior specification is non-trivial
+  - Often default to conjugate or non-informative priors
 - Calculation of model evidence hard in non-conjugate problems
 
 Uses of BMA
 - Model combination for
   - Prediction
   - Model selection (covariate choices)
+    - Might be a good one to demonstrate, paper for example: https://www.stat.washington.edu/raftery/Research/PDF/viallefont2001.pdf
+    - Captures the uncertainty we have at modeling onset about which model is the best, propogates through modeling process
 - Prediction of a new point involves averaging the predictions of all models we have posteriors for
 - Parameter estimation for a parameter common to all of our models involves weighting the model outputs for that parameter
