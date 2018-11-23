@@ -1,0 +1,94 @@
+---
+title: "Bootstrap Homework"
+author: "Matthew Reyers"
+date: "November 20, 2018"
+output: html_document
+---
+
+
+1. Load the "eco" dataset from the faraway package in r.
+```{r}
+library(tidyverse)
+library(faraway)
+data(eco)
+```
+
+2. Split the data into 80% training, 20% testing data.
+```{r}
+n <- dim(eco)[1]
+nsamp <- sample(seq(1:n), trunc(0.8*n))
+
+train <- eco %>% filter(row_number() %in% nsamp)
+test <- eco %>% filter(row_number() %in% setdiff(seq(1:n), nsamp))
+
+```
+
+
+3. Compute the prediction intervals for your test set.
+```{r}
+# The model
+eco.model <- lm(income ~ ., train)
+eco.predictions <- predict(eco.model, test)
+s <- summary(eco.model)
+r <- s$residuals - mean(s$residuals)
+
+# Bootstrap samples
+B <- 10000
+M <- 1 # Since B is large enough, M = 1 is fine
+boot.coeffs <- matrix(NA, B, 4)
+
+deltaStarAll <- c()
+
+for(i in 1:B){
+  # Sample residuals with replacement
+  smpl <- sample(residuals(eco.model), replace = T)
+  
+  # Get bootstrap ys
+  yboot <- fitted(eco.model) + smpl
+  
+  # Do regression on new ys
+  boot.mdl <- update(eco.model, yboot ~ ., train)
+  
+  boot.coeffs[i, ] <- coefficients(boot.mdl)
+  
+  for(j in 1:M){
+    # Need to variance correct residuals via leverage
+    base_residuals <- residuals(boot.mdl)
+    leverage <- hat(model.matrix(boot.mdl))
+    var_correct <- base_residuals / sqrt(1- leverage)
+    
+    # Then need to subtract mean of the variance corrected residuals
+    var_correct_0_mean <- var_correct - mean(var_correct)
+    
+    # Result is 0 expectation and variance correction, as desired
+    epsilon_star <- sample(var_correct_0_mean, size = dim(test)[1])
+    
+    boot.predictions <- predict(boot.mdl, test)
+    deltaStar <- boot.predictions - eco.predictions + epsilon_star
+    
+    # Add to a data frame these results
+    deltaStarAll <- rbind(deltaStarAll, deltaStar)
+  }
+}
+
+# 2.5-97.5th quantile CIs
+quant <- apply(deltaStarAll, MARGIN = 2, FUN = quantile, probs = c(0.025, 0.975))
+
+lower_interval <- eco.predictions + quant[1,]
+upper_interval <- eco.predictions + quant[2,]
+pred_num <- factor(row_number(lower_interval))
+
+plotData <- data.frame(lower_interval,
+                       upper_interval,
+                       eco.predictions,
+                       test$income, 
+                       pred_num)
+
+ggplot(data = plotData, aes(x = pred_num, y = eco.predictions)) + geom_point() + geom_errorbar(aes(ymin = lower_interval, ymax = upper_interval)) + geom_point(aes(x = pred_num, y = test$income, col = "red", shape = "*")) + ggtitle("Intervals for bootstrap predictions") +
+  xlab(" Observation from test set") +
+  ylab(" Income ")
+```
+
+
+
+Please plot your prediction intervals with the true value labeled on the plot. Income is the response variable for the dataset.
