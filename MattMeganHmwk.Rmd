@@ -42,6 +42,6 @@ d) Examine rotated and non-rotated loadings. What does rotation accomplish?
 In using the rotation, I found the rotated loadings to have fewer entries in subsequent factors, i.e. more information was captured by the first factor than the remaining 3. This helps to simplify the interpretation of the factors as it is more clear what each factor is explaining.
 
 e) Recommendations for those working in the field
-Using the results of the rotated factor analysis, I would say that a limited amount of the variation can be explained by the individual variables in this data set but that the summarization to a level of 4 factors can be of use. We are able to capture roughly 35% of the common variance through this analysis which should lead to more logical and informative fits.
+Using the results of the rotated factor analysis, I would say that a limited amount of the communal variation can be explained by the individual variables in this data set but that the summarization to a level of 4 factors can be of use. We are able to capture roughly 35% of the common variance through this analysis which should lead to more logical and informative fits.
 
 

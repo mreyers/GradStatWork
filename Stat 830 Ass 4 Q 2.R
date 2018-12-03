@@ -11,7 +11,7 @@ thetaHat <- exp(mean(X))
 
 B <- 10000
 
-# Parametric bootstrap: Generate thetaHat from the theoretical distribution to assign bounds
+# Bootstrap
 n <- 100
 thetaHatEst <- rep(0, B)
 hatVec <- rep(0, B)
@@ -34,7 +34,7 @@ ggplot() +
   theme_bw() +
   geom_density(aes(thetaHatEst, colour = "Parametric")) +
   geom_density(aes(hatVec, colour = "Non-parametric")) +
-  stat_function(aes(x = X, colour = "Delta Method"), fun = dnorm, n = 1000, args = c(mean = exp(mean(X)), 
+  stat_function(aes(x = X, colour = "Delta Method"), fun = dnorm, n = 1000, args = c(mean = exp(mean(X)), # Add in Delta Function to plotting
                                                                                      sd = exp(mean(X)) / sqrt(100))) +
   scale_x_continuous(limits = c(100, 225), expand = c(0, 0)) +
   stat_function(aes(x = X, colour = "True Distribution"), fun = dnorm, n = 1000,
