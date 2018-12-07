@@ -1,0 +1,70 @@
+---
+title: "Question 5 Final"
+author: "Matthew Reyers"
+date: "December 6, 2018"
+output: html_document
+---
+
+a) Conditions under which an experiment was performed. What is the name of the designed experiment?
+Since this experiment is based on two different blocking variables, and each blocking variable represents a random effect, the experiment designers implemented a Latin Block Design to control for as much of the random effects as possible. 
+
+b) Plot the data in such a way as to investigate whether or not there is a potential effect of the treatment factor or either of the blocking factors. Comment on what I observed.
+```{r}
+library(tidyverse)
+shelfData <- read.table("question5.txt", header = T) %>% mutate(Week = as.factor(Week),
+                                                                Store = as.factor(Store),
+                                                                Treatment = as.factor(Treatment))
+str(shelfData)
+
+# Individual plots
+shelfData %>% ggplot(aes(x = Treatment, y = Sales)) + geom_point()
+shelfData %>% ggplot(aes(x = Store, y = Sales)) + geom_point()
+shelfData %>% ggplot(aes(x = Week, y = Sales)) + geom_point()
+
+# Interaction
+shelfData %>% ggplot(aes(x = Week, y = Sales, col = Store)) + geom_point() + geom_line(aes(group = Store))
+shelfData %>% ggplot(aes(x = Treatment, y = Sales, col = Store)) + geom_point() + geom_line(aes(group = Store))
+```
+There appears to be a relationship between store and sales as there is separation between the first two stores and the last two stores in terms of sales. Treatment and Week effects currently seem spurious, though there appears to be an interaction between Week and Store. 
+
+c) State the appropriate model and fit it using whatever software I want
+The design is a mixed effects model where Treatment is a fixed effect and Store and Week are random effects. 
+```{r}
+library(lme4)
+linMixModel <- lmer(Sales ~ Treatment + (1 | Week) + (1 | Store), data = shelfData, REML = FALSE)
+linMixReduced <- lmer(Sales ~ Treatment + (1 | Store), data = shelfData, REML = FALSE)
+anova(linMixReduced, linMixModel)
+
+```
+The appropriate model can be reduced to just including the random effect for Store and the fixed effect for treatment by the anova test for model usefulness. Because of such a large p-value in that test, I suggest that the addition of the random effect for Week added no real value and therefore would rather pursue the more parsimonious model.
+
+d) State the model assumptions and use plots to investigate
+There are 3 main assumptions in a mixed effects model.
+
+
+
+1. Errors are normally distributed
+```{r}
+tempSum <- summary(linMixReduced)
+qqplot(x = qnorm(ppoints(16)), y = tempSum$residuals)
+abline(a = 0, b = 1)
+```
+The plot isn't pretty as it is manually made. It does however suggest that the errors are normal enough as there are not any enormous departures from normality. A little concern may be had about the flatness in the middle of the graph.
+
+2. Model is additive
+The model is only a linear combination of components and thus satisfies additive requirements.
+
+3. There are no interactions among blocks or treatments
+```{r}
+interaction.plot(shelfData$Store, shelfData$Treatment, shelfData$Sales)
+```
+The lines are not parallel (or justifiably close) suggesting that there is some interaction between blocks and treatment. I would suggest that this assumption is not met.
+
+e) Perform appropriate hypothesis tests to see if there is significant evidence of a treatment effect.
+
+```{r}
+library(car)
+tempSum
+Anova(linMixReduced, type = c("III"))
+```
+Since the hypothesis of interest in this experiment is if there is equality among the treatment means, an ANOVA test is a good choice. Here we will test the null of all treatment means are equal against the alternative that at least one is not equal. Note that due to this being a factorial design experiment the Anova cannot be run with type 1 or 2 sums of squares. For this reason we use the Type 3 sum of squares. 

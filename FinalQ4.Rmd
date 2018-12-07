@@ -1,0 +1,64 @@
+---
+title: "Question 4 Final"
+author: "Matthew Reyers"
+date: "December 6, 2018"
+output: html_document
+---
+
+
+```{r}
+radioData <- read.table("question4.txt")
+head(radioData)
+```
+
+a) Plot the data and comment on the results
+```{r}
+library(tidyverse)
+# Individually first
+radioData %>% ggplot(aes(x = V1, y = V3)) + geom_boxplot() + ggtitle("Comparing response to impurity level")
+radioData %>% ggplot(aes(x = V2, y = V3)) + geom_boxplot(alpha = 0.2) + geom_point() + ggtitle("Comparing response to density level")
+
+# Together now
+radioData %>% ggplot(aes(x = V1:V2, y = V3)) + geom_boxplot(alpha = 0.2) + geom_point() + ggtitle("Comparing response to combinations of impurity and density levels")
+```
+Initial plotting seems to indicate that the driving force behind absorption rate is likely variable 1 (which I have labelled impurity level) as it displays both a difference between its higher and lower levels as well as distinct differences in the joint plot. The joint plot also suggests an interaction between variable 1 and variable 2 as the high level of variable 1 has different distributions given variable 2 is either high or low.
+
+b) Write down a suitable model for this experiment
+The response we are measuring is a continuous value and we have only factors as predictors. The question we are aiming to answer is what type of effect graphite properties have on absorption. This therefore suggests to me that a multiple linear regression based on the individual factors and their corresponding interaction would be a suitable model, i.e. V3 ~ V1 + V2 + V1:V2
+
+c) Test the appropriate hypotheses to see if factors impact the response. If yes, explore difference of means between level combinations.
+```{r}
+radioLM <- lm(V3 ~ V1 + V2 + V1:V2, data = radioData)
+summary(radioLM)
+
+```
+Model fit suggests that both factors are influential with respect to the response as they all have tiny p-values, even when considered against a 5% or Bonferroni corrected value. I will now explore differences between level combinations of the factors.
+```{r}
+TukeyHSD(aov(radioLM))
+```
+As viewable by the earlier box plot, the only non-significant difference between levels occurs when V1 is low and the interacting factor V2 is either high or low. There is no significant difference between these two combinations, as further explained by the difference of means analysis above. 
+
+d) Use residuals to assess whether model assumptions are satisfied. Comment on plots.
+```{r}
+plot(radioLM)
+```
+1. Constant variance
+The residuals vs. fitted values plot suggests that the residuals tend to be relatively evenly spread over the factors, suggesting variance is constant and that we have no cause for concern.
+
+2. Residuals are normally distributed
+The Q-Q plot above tails off on both ends away from normality. The data seems to be sufficiently close to normal, though I would not be surprised if a data transformation method could be applied to some degree of success. 
+
+3. Predictors not heavily correlated
+Satisfied as we are working with factors and wont have to worry about dropping rank in this regard.
+
+All in all, I would say the model assumptions are met and that this model would be useful in understanding the absorption rate of graphite.
+
+e) What sample size do we need to have 80% power at the 5% level for a mean difference of 1 ratio unit.
+To detect a mean difference of 1 ratio unit, I would want the confidence interval on mean(V1[high]) - mean(V1[low]) to be 2 units long, meaning that I would want z_a/2 * sqrt(sigma_star / n) to be of length 1.
+```{r}
+z_alpha_05 <- 1.96
+################## NOT DONE ###########################
+# Can't find an obvious power calculator so I am going to simulate my approach
+# If there were a true difference of 1 unit, 
+```
+

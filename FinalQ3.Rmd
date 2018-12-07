@@ -1,0 +1,49 @@
+---
+title: "Question 3 Final"
+author: "Matthew Reyers"
+date: "December 6, 2018"
+output: html_document
+---
+
+
+Need to simulate actual y values according to the model y = b0 + b1x1 + b2x2 + e given certain values
+```{r}
+library(tidyverse)
+predictors <- read.table("question3.txt")
+names(predictors) <- c("x1", "x2")
+
+N <-  1000 # number of simulations
+
+b0 <- 1
+b1 <- 2
+b2 <- 3
+sigma <- sqrt(0.25)
+
+b0Hat <- rep(0, N)
+b1Hat <- rep(0, N)
+b2Hat <- rep(0, N)
+cov_matrix <- matrix(0, nrow = 3, ncol = 3)
+
+theoretical_y <- b0 + b1*predictors$x1 + b2*predictors$x2
+theoretical_lm<- lm(theoretical_y ~ x1 + x2, data = predictors)
+cov_matrix_theoretical <- summary(theoretical_lm)$cov.unscaled
+
+for( i in 1:N){
+  error <- rnorm(n = dim(predictors)[1], mean = 0, sd = sigma)
+  y <- b0 + b1*predictors$x1 + b2 *predictors$x2 + error
+  fitTest <- lm(y ~ x1 + x2, data = predictors) %>% summary()
+  b0Hat[i] <- fitTest$coef[1,1]
+  b1Hat[i] <- fitTest$coef[2,1]
+  b2Hat[i] <- fitTest$coef[3,1]
+  cov_matrix <- cov_matrix + fitTest$cov.unscaled
+}
+
+# Compare the means versus theoretical means for the parameter estimates
+abs(mean(b0Hat) - b0)
+abs(mean(b1Hat) - b1)
+abs(mean(b2Hat) - b2)
+
+# Compare the average covariance matrix with the actual covariance matrix
+cov_matrix / N - cov_matrix_theoretical
+```
+Errors between the parameter estimates over the average of models with the actual parameters were miniscule. The only thing of note was the increase in error as the true parameter size grew larger but that is partly due to not scaling these results to be ratios. The differences are even smaller when we consider the covariance matrices. 

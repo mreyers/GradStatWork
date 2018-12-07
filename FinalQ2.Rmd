@@ -1,0 +1,105 @@
+---
+title: "Question 2 Final"
+author: "Matthew Reyers"
+date: "December 6, 2018"
+output: html_document
+---
+
+Use data set for question 2 to do the following
+
+```{r, include = FALSE}
+library(tidyverse)
+myData <- read.table("question2.txt")
+names(myData) <- c("Int", "X1", "X2", "X3", "X4", "X5", "Y")
+str(myData)
+```
+
+Data read in and successfully recognized as numerical. Now to work on the questions.
+
+a) Fit a multiple linear regression model to the data. What are the estimated least squares regression coefficients?
+```{r}
+# Full model
+myLM <- myData %>% lm(Y ~ . - 1, .)
+summary(myLM)
+
+
+# Model with intercept but without first column
+myLM2 <- myData %>% lm(Y ~ X1 + X2 + X3 + X4 + X5, .)
+summary(myLM2)
+
+summary(myLM)$coef[,1]
+```
+The two models fit above are the same, I was just experimenting with R to see how it handled the data set with respect to the lm function. Fortunately the behaviour is exactly as expected.
+
+As for the coefficients, these are found in the last output above. The variables are named as in the document. 
+
+b) What is sigma hat?
+Sigma hat is found in the Residual Standard error output of the linear model, value `r summary(myLM)$sigma`. The value seems a little larger than I would expect, possibly due to outliers of some sort. Further investigation into model plots confirmed that there is one immense outlier in the residuals which is driving the sigma hat value larger. Plots displayed below.
+```{r}
+plot(myLM)
+```
+
+
+c) What are the model assumptions?
+1. Relationship between predictors and Y is linear. Check this assumption by residual  plots. If this relationship is not linear, the residual plots will have patterns in them where there should otherwise not be. As referenced in b), with the exception of the one large outlier, the assumption of linearity is met.
+
+2. Residuals should be normally distributed. Check this assumption with a Q-Q plot. Same as 1., the data fits well into the Q-Q plot with the exception of the one large outlier. Content to say the assumption is met.
+
+3. Predictors should not be heavily correlated. Check this with a correlation matrix.
+```{r}
+cor(myData[,2:6])
+```
+Predictors have correlation values that are getting to a point where I would be concerned with collinearity. A nice fix to this would be the application of something like Ridge Regression where we can reduce the impact of collinearity. 
+
+d) What are the 95% CI for model coefficients?
+```{r}
+confint(myLM) # Lazy way
+
+```
+
+e) Find a joint 95% CI for beta1 and beta2. Use interval to test both are zero vs. alternative that they are not both zero.
+```{r}
+# Recycling code from assignment 2
+library(ellipse)
+intervals <- confint(myLM)
+plot.new()
+
+plot(ellipse(myLM, c(2,3)), type = "l", main = "Joint CI on X1 and X2 against null", xlim = c(0, 1.2), ylim = c(0, 2.2))
+points(x = mean(intervals[2,]), y = mean(intervals[3,]), col = "green")
+points(x = 0, y = 0, col = "blue")
+
+```
+The null hypothesis, that both beta1 and beta2 are zero simultaneously, is the blue dot above located at (0, 0). If there were to be insufficient evidence disputing this claim, then there would have to be some overlap between the joint confidence interval and the null point. As can be seen, no such overlap exists. This allows us to conclude that the null hypothesis should be rejected.
+
+
+f) Apply ridge regression to these data. On a single plot, show how the model parameters vary as a function of the ridge parameter. What are the final values and interpret.
+```{r}
+library(MASS)
+y <- myData$Y
+x <- model.matrix(Y ~ . - 1, myData)
+lambdas <- 10^seq(3, -2, by = -0.1)
+
+ridgePlot <- lm.ridge(Y ~ Int + X1 + X2 + X3 + X4 + X5 - 1, data = myData, lambda = lambdas)
+plot(ridgePlot)
+
+fit.ridge <- cv.glmnet(x, y, alpha = 0, lambda = lambdas)
+opt_lambda <- fit.ridge$lambda.min
+```
+The legend isnt printing properly right now but the graph is interpretable enough by using lambda = 0 and identifying this to be our OLS. This means that the green line is X2, organge is x1, black is Int, dark blue is X3, light blue is x4, and pink is x5. As for the plot itself, it is clear that the coefficients tend to shrink towards zero as the lambda value is increased. As for the final values of the coefficients, I will use the results from the optimal lambda test in cv.glmnet to determine what values to use. The function returns `r opt_lambda`. The resulting model is then as follows.
+```{r}
+ridgeFinal <- lm.ridge(Y ~ Int + X1 + X2 + X3 + X4 + X5 - 1, data = myData, lambda = opt_lambda)
+ridgeFinal$coef
+```
+
+
+g) Apply forward selection to the data and interpret the output. Final values for the coefficients?
+```{r}
+fitNull <- lm(Y ~  -1, data = myData)
+fitFull <- lm(Y ~ .-1, data = myData)
+step <- step(fit, scope = list(lower = fitNull, upper = fitFull), direction = "forward")
+step$coefficients
+```
+The output demonstrates that all of the predictors are useful to the model and that the model is better off without an intercept term. Final coefficients are in the output above.
+
+h) Given model fits, what integer values would I expect as coefficients on the predictors.
+My guess would be X1 = 1, X2 = 2, X3 = -3, X4 = -4, X5 = -5.
