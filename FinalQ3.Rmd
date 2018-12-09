@@ -13,6 +13,7 @@ predictors <- read.table("question3.txt")
 names(predictors) <- c("x1", "x2")
 
 N <-  1000 # number of simulations
+n <- dim(predictors)[1]
 
 b0 <- 1
 b1 <- 2
@@ -22,11 +23,10 @@ sigma <- sqrt(0.25)
 b0Hat <- rep(0, N)
 b1Hat <- rep(0, N)
 b2Hat <- rep(0, N)
-cov_matrix <- matrix(0, nrow = 3, ncol = 3)
 
-theoretical_y <- b0 + b1*predictors$x1 + b2*predictors$x2
-theoretical_lm<- lm(theoretical_y ~ x1 + x2, data = predictors)
-cov_matrix_theoretical <- summary(theoretical_lm)$cov.unscaled
+
+X <- data.matrix(cbind(rep(1, n = dim(predictors)[1]), predictors))
+vCovMatrix <- solve(t(X) %*% X) * (sigma^2)
 
 for( i in 1:N){
   error <- rnorm(n = dim(predictors)[1], mean = 0, sd = sigma)
@@ -35,7 +35,6 @@ for( i in 1:N){
   b0Hat[i] <- fitTest$coef[1,1]
   b1Hat[i] <- fitTest$coef[2,1]
   b2Hat[i] <- fitTest$coef[3,1]
-  cov_matrix <- cov_matrix + fitTest$cov.unscaled
 }
 
 # Compare the means versus theoretical means for the parameter estimates
@@ -44,6 +43,156 @@ abs(mean(b1Hat) - b1)
 abs(mean(b2Hat) - b2)
 
 # Compare the average covariance matrix with the actual covariance matrix
-cov_matrix / N - cov_matrix_theoretical
+est_cov_matrix <- cov(data.frame(cbind(b0Hat, b1Hat, b2Hat)))
+est_cov_matrix - vCovMatrix
+
+
 ```
-Errors between the parameter estimates over the average of models with the actual parameters were miniscule. The only thing of note was the increase in error as the true parameter size grew larger but that is partly due to not scaling these results to be ratios. The differences are even smaller when we consider the covariance matrices. 
+Errors between the parameter estimates over the average of models with the actual parameters were miniscule. The only thing of note was the increase in error as the true parameter size grew larger but that is partly due to not scaling these results to be ratios. Covariances between the parameter estimates look to be relatively consistent with the underlying true distribution.
+
+
+b) Do the same but this time consider a Bayesian approach with priors on Beta and sigma^2. This question will focus on MVN(0, 5-5-5) prior for Beta and IG(2, 0.5) for sigma^2.
+
+We know from homework assignment 3 that a likelihood based on a normally distributed variable, paired with a Normal prior on beta and an Inverse Gamma prior on sigma^2, results in a posterior that is also a product of a Normal distribution and an Inverse Gamma distribution.
+If we relabel the priors as MVN(0, sigma^2 vcov) and IG(a, b), then the conjugate posterior is as follows:
+Normal(mu_Beta, sigma^2 inverse(vcov_new)) and IG(a + n/2, bnew/2) where
+
+mu_Beta = inverse(inverse(vcov) + XTX)XTy
+vcov_new = inverse(XTX + inverse(vcov))
+bnew = b + 1/2(yTy - mu_betaT inverse(vcov_new) mu_beta)
+
+Or at least that is what it looks like on my old homework assignment. I will now attempt to derive the posterior.
+```{r}
+# Set up original parameters
+a <- 2
+b <- 0.5
+
+mu_0 <- c(0, 0, 0)
+vCov_param <- matrix(c(5, 0, 0,
+                       0, 5, 0,
+                       0, 0, 5), byrow = T, ncol = 3, nrow = 3)
+
+mean_post <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+
+for(i in 1:N){
+  
+  # Posterior parameters
+  error <- rnorm(n = dim(predictors)[1], mean = 0, sd = sigma)
+  y <- b0 + b1*predictors$x1 + b2 *predictors$x2 + error
+  
+  mu_Beta <- solve(solve(vCov_param) + t(X) %*% X) %*% (t(X) %*% y)
+  vCov_new <- solve(solve(vCov_param) + t(X) %*% X)
+  b_new <- b + 1/2 * (t(y)%*%y - t(mu_Beta) %*% solve(vCov_new) %*% mu_Beta)
+  
+  # Now calculate posterior mean
+    # Posterior is a product of two independent distributions, so posterior mean is a product of two means
+    # Mean for normal is mu_Beta
+    mean_1 <- mu_Beta
+    # Mean for Inverse Gamma is b / (a- 1) = (b_new/2) / (a + n/2 - 1)
+    mean_2 <- (b_new / 2) / (a + n/2 - 1) 
+    
+    # Posterior mean
+    mean_post[i,] <- t(mean_1 %*% mean_2)
+}
+
+# Compare mean of estimated model parameters with the theoretical model value
+mean(mean_post[,1]) - b0
+mean(mean_post[,2]) - b1
+mean(mean_post[,3]) - b2
+
+# Compare covariance of estimated parameters with actual covariance matrix
+est_cov_matrix_bayes1 <- cov(mean_post)
+est_cov_matrix_bayes1 - vCovMatrix
+```
+Write conclusion
+
+c) Again Bayesian but with beta following a MVN(1, 1-2-3) prior and the same inverse gaussian
+
+```{r}
+# Set up original parameters
+a <- 2
+b <- 0.5
+
+mu_0 <- c(1, 1, 1)
+vCov_param <- matrix(c(1, 0, 0,
+                       0, 2, 0,
+                       0, 0, 3), byrow = T, ncol = 3, nrow = 3)
+
+mean_post <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+
+for(i in 1:N){
+  
+  # Posterior parameters
+  error <- rnorm(n = dim(predictors)[1], mean = 0, sd = sigma)
+  y <- b0 + b1*predictors$x1 + b2 *predictors$x2 + error
+  
+  mu_Beta <- solve(solve(vCov_param) + t(X) %*% X) %*% (t(X) %*% y)
+  vCov_new <- solve(solve(vCov_param) + t(X) %*% X)
+  b_new <- b + 1/2 * (t(y)%*%y - t(mu_Beta) %*% solve(vCov_new) %*% mu_Beta)
+  
+  # Now calculate posterior mean
+    # Posterior is a product of two independent distributions, so posterior mean is a product of two means
+    # Mean for normal is mu_Beta
+    mean_1 <- mu_Beta
+    # Mean for Inverse Gamma is b / (a- 1) = (b_new/2) / (a + n/2 - 1)
+    mean_2 <- (b_new / 2) / (a + n/2 - 1) 
+    
+    # Posterior mean
+    mean_post[i,] <- t(mean_1 %*% mean_2)
+}
+
+# Compare mean of estimated model parameters with the theoretical model value
+mean(mean_post[,1]) - b0
+mean(mean_post[,2]) - b1
+mean(mean_post[,3]) - b2
+
+# Compare covariance of estimated parameters with actual covariance matrix
+est_cov_matrix_bayes2 <- cov(mean_post)
+est_cov_matrix_bayes2 - vCovMatrix
+```
+Review
+
+d) Again with beta following a MVN(1, 0.1-0.1-0.1) prior and the same Inverse Gaussian prior
+```{r}
+# Set up original parameters
+a <- 2
+b <- 0.5
+
+mu_0 <- c(1, 1, 1)
+vCov_param <- matrix(c(0.1, 0, 0,
+                       0, 0.1, 0,
+                       0, 0, 0.1), byrow = T, ncol = 3, nrow = 3)
+
+mean_post <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+
+for(i in 1:N){
+  
+  # Posterior parameters
+  error <- rnorm(n = dim(predictors)[1], mean = 0, sd = sigma)
+  y <- b0 + b1*predictors$x1 + b2 *predictors$x2 + error
+  
+  mu_Beta <- solve(solve(vCov_param) + t(X) %*% X) %*% (t(X) %*% y)
+  vCov_new <- solve(solve(vCov_param) + t(X) %*% X)
+  b_new <- b + 1/2 * (t(y)%*%y - t(mu_Beta) %*% solve(vCov_new) %*% mu_Beta)
+  
+  # Now calculate posterior mean
+    # Posterior is a product of two independent distributions, so posterior mean is a product of two means
+    # Mean for normal is mu_Beta
+    mean_1 <- mu_Beta
+    # Mean for Inverse Gamma is b / (a- 1) = (b_new/2) / (a + n/2 - 1)
+    mean_2 <- (b_new / 2) / (a + n/2 - 1) 
+    
+    # Posterior mean
+    mean_post[i,] <- t(mean_1 %*% mean_2)
+}
+
+# Compare mean of estimated model parameters with the theoretical model value
+mean(mean_post[,1]) - b0
+mean(mean_post[,2]) - b1
+mean(mean_post[,3]) - b2
+
+# Compare covariance of estimated parameters with actual covariance matrix
+est_cov_matrix_bayes3 <- cov(mean_post)
+est_cov_matrix_bayes3 - vCovMatrix
+```
+
