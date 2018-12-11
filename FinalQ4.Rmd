@@ -56,9 +56,38 @@ All in all, I would say the model assumptions are met and that this model would 
 e) What sample size do we need to have 80% power at the 5% level for a mean difference of 1 ratio unit.
 To detect a mean difference of 1 ratio unit, I would want the confidence interval on mean(V1[high]) - mean(V1[low]) to be 2 units long, meaning that I would want z_a/2 * sqrt(sigma_star / n) to be of length 1.
 ```{r}
-z_alpha_05 <- 1.96
-################## NOT DONE ###########################
-# Can't find an obvious power calculator so I am going to simulate my approach
-# If there were a true difference of 1 unit, 
-```
 
+# Differences
+V1High <- mean(radioData$V3[radioData$V1 == "High"])
+V1Low  <- mean(radioData$V3[radioData$V1 == "Low"])
+V1Diff <- V1High - V1Low
+
+V2High <- mean(radioData$V3[radioData$V2 == "High"])
+V2Low  <- mean(radioData$V3[radioData$V2 == "Low"])
+V2Diff <- V2High - V2Low
+
+# Sample size calc for V1, n1 = n2 
+n <- seq(5, 500, by = 10)
+pooled_sd_V1 <- (sum((radioData$V3[radioData$V1 == "High"] - V1High)^2) + sum((radioData$V3[radioData$V1 == "Low"] - V1Low)^2)) / (2 * n - 2)
+power <- 1 - pnorm(1.645 - sqrt(n) / sqrt(pooled_sd_V1*2))
+plot(power) # Need further analysis between 5 and 15
+
+nTest <- seq(5, 15, by = 1)
+pooled_sd_V1_test <- (sum((radioData$V3[radioData$V1 == "High"] - V1High)^2) + sum((radioData$V3[radioData$V1 == "Low"] - V1Low)^2)) / (2 * nTest - 2)
+power_test <- 1 - pnorm(1.645 - sqrt(nTest) / sqrt(pooled_sd_V1_test*2))
+plot(power_test)
+# n = 14
+
+
+# Sample size calc for V2, n1 = n2
+pooled_sd_V2 <- (sum((radioData$V3[radioData$V2 == "High"] - V2High)^2) + sum((radioData$V3[radioData$V2 == "Low"] - V2Low)^2)) / (2 * n - 2)
+power_V2 <- 1 - pnorm(1.645 - sqrt(n) / sqrt(pooled_sd_V2*2))
+plot(power_V2) # Need more investigation between 30 and 40
+
+nTestV2 <- seq(30, 40, by = 1)
+pooled_sd_V2_Test <- (sum((radioData$V3[radioData$V2 == "High"] - V2High)^2) + sum((radioData$V3[radioData$V2 == "Low"] - V2Low)^2)) / (2 * nTestV2 - 2)
+power_test_V2 <- 1 - pnorm(1.645 - sqrt(nTestV2) / sqrt(pooled_sd_V2_Test*2))
+plot(power_test_V2)
+# n = 36
+```
+The above power analysis is based on a 1-tailed test at the 5% level, giving a critical score of 1.645. Using normal approximations and pivots, the corresponding test suggests that a true difference in V1 of 1 unit or more would be correctly detected 80% of the time using a sample size of n = 14 per level. As for a 1 unit difference in V2, this would be correctly detected 80% of the time using a sample size of n = 36 per level.   
