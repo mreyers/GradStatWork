@@ -70,5 +70,6 @@ Since the hypothesis of interest in this experiment is if there is equality amon
 The test results in the intercept term (which absorbed Treatment level 1 due to R) has a Chisq value of 15.6012, generating a p-value of 7.82*e-05. This result suggests we can reject the hypothesis that all treatments are equal.
 
 f) State the appropriate model for redoing this experiment with 4 different stores and weeks, using both pools of data. Include assumptions and distributions.
+
 To handle this situation, I could stack all my data in the 2 columns I already have and add a new vector indicating which batch the observation is from. This would result in a 32x3 matrix, where the first 16 rows are as we had previously with column 3 reading Batch 1 and the last 16 rows the new observations with column 3 reading Batch 2. The response values would be stacked the same.
 The model is then a mixed effects model again with a fixed effect for treatment, a random effect for Store (assume N(0, sigma_store^2)), a random effect for Week (assume N(0, sigma_week^2)), a random effect for Batch (assume N(0, sigma_batch^2)), and finally a random effect for error (assume N(0, sigma_e^2)).
