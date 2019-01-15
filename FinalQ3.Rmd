@@ -23,6 +23,8 @@ sigma <- sqrt(0.25)
 b0Hat <- rep(0, N)
 b1Hat <- rep(0, N)
 b2Hat <- rep(0, N)
+sigma_sq_hat <- rep(0, N)
+
 
 
 X <- data.matrix(cbind(rep(1, n = dim(predictors)[1]), predictors))
@@ -35,17 +37,22 @@ for( i in 1:N){
   b0Hat[i] <- fitTest$coef[1,1]
   b1Hat[i] <- fitTest$coef[2,1]
   b2Hat[i] <- fitTest$coef[3,1]
+  sigma_sq_hat[i] <- fitTest$sigma ^ 2
 }
 
 # Compare the means versus theoretical means for the parameter estimates
 abs(mean(b0Hat) - b0)
 abs(mean(b1Hat) - b1)
 abs(mean(b2Hat) - b2)
+abs(mean(sigma_sq_hat) - sigma^2)
 
 # Compare the average covariance matrix with the actual covariance matrix
 est_cov_matrix <- cov(data.frame(cbind(b0Hat, b1Hat, b2Hat)))
 est_cov_matrix - vCovMatrix
 
+# Alternative comparison
+est_cov_matrix_2 <- solve(t(X) %*% X) * (mean(sigma_sq_hat))
+est_cov_matrix_2 - vCovMatrix
 
 ```
 Errors between the parameter estimates over the average of models with the actual parameters were miniscule. The only thing of note was the increase in error as the true parameter size grew larger but that is partly due to not scaling these results to be ratios. Covariances between the parameter estimates look to be relatively consistent with the underlying true distribution.
@@ -73,6 +80,7 @@ vCov_param <- matrix(c(5, 0, 0,
                        0, 0, 5), byrow = T, ncol = 3, nrow = 3)
 
 mean_post <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+mean_post_sigma <- rep(0, N)
 
 for(i in 1:N){
   
@@ -92,21 +100,23 @@ for(i in 1:N){
     mean_2 <- (b_new / 2) / (a + n/2 - 1) 
     
     # Posterior mean
-    mean_post[i,] <- t(mean_1 %*% mean_2)
+    mean_post[i,] <- mean_1 #t(mean_1 %*% mean_2)
+    mean_post_sigma[i] <- mean_2
 }
 
 # Compare mean of estimated model parameters with the theoretical model value
 mean(mean_post[,1]) - b0
 mean(mean_post[,2]) - b1
 mean(mean_post[,3]) - b2
+mean(mean_post_sigma) - sigma^2
 
 # Compare covariance of estimated parameters with actual covariance matrix
 est_cov_matrix_bayes1 <- cov(mean_post)
 est_cov_matrix_bayes1 - vCovMatrix
 ```
-Write conclusion
+The Bayesian approach above, based on the derivation from class, shows a reasonable performance against the actual parameters. There is a slight tendency to underestimate the variance for each Beta and for the overall variance sigma^2. The model estimates are not bad and it is not glaringly incorrect.
 
-c) Again Bayesian but with beta following a MVN(1, 1-2-3) prior and the same inverse gaussian
+c) Again Bayesian but with beta following a MVN(1, 1-2-3) prior and the same inverse gamma. Note that a non-zero mean changes how the parameters are derived. 
 
 ```{r}
 # Set up original parameters
@@ -118,41 +128,44 @@ vCov_param <- matrix(c(1, 0, 0,
                        0, 2, 0,
                        0, 0, 3), byrow = T, ncol = 3, nrow = 3)
 
-mean_post <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+mean_post_beta <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+mean_post_sigma <- rep(0, N)
 
+# Fit
 for(i in 1:N){
   
-  # Posterior parameters
+  # Simulate model
   error <- rnorm(n = dim(predictors)[1], mean = 0, sd = sigma)
   y <- b0 + b1*predictors$x1 + b2 *predictors$x2 + error
+  fitTest <- lm(y ~ x1 + x2, data = predictors) %>% summary()
   
-  mu_Beta <- solve(solve(vCov_param) + t(X) %*% X) %*% (t(X) %*% y)
-  vCov_new <- solve(solve(vCov_param) + t(X) %*% X)
-  b_new <- b + 1/2 * (t(y)%*%y - t(mu_Beta) %*% solve(vCov_new) %*% mu_Beta)
+  # Extract beta hats
+  betaHat <- fitTest$coefficients[,1]
   
-  # Now calculate posterior mean
-    # Posterior is a product of two independent distributions, so posterior mean is a product of two means
-    # Mean for normal is mu_Beta
-    mean_1 <- mu_Beta
-    # Mean for Inverse Gamma is b / (a- 1) = (b_new/2) / (a + n/2 - 1)
-    mean_2 <- (b_new / 2) / (a + n/2 - 1) 
-    
-    # Posterior mean
-    mean_post[i,] <- t(mean_1 %*% mean_2)
-}
+  # Establish posterior parameters
+  mu_n <- solve(t(X) %*% X + solve(vCov_param)) %*% (solve(vCov_param) %*% mu_0 + t(X) %*% X %*% betaHat)
+  vCov_n <- t(X) %*% X + solve(vCov_param)
+  a_n <- a + n / 2
+  b_n <- b + 1/2 * (t(y) %*% y + t(mu_0) %*% solve(vCov_param) %*% mu_0 - t(mu_n) %*% vCov_n %*% mu_n)
+  
+  # Store posterior means for the beta estimates and sigma estimates
+  mean_post_beta[i,] <- t(mu_n)
+  mean_post_sigma[i] <- b_n / (a_n - 1)
 
+}
 # Compare mean of estimated model parameters with the theoretical model value
-mean(mean_post[,1]) - b0
-mean(mean_post[,2]) - b1
-mean(mean_post[,3]) - b2
+mean(mean_post_beta[,1]) - b0
+mean(mean_post_beta[,2]) - b1
+mean(mean_post_beta[,3]) - b2
+mean(mean_post_sigma) - sigma^2
 
 # Compare covariance of estimated parameters with actual covariance matrix
-est_cov_matrix_bayes2 <- cov(mean_post)
+est_cov_matrix_bayes2 <- cov(mean_post_beta)
 est_cov_matrix_bayes2 - vCovMatrix
 ```
-Review
+Although this model still underestimates the variance associated with each beta, the estimate for the overall variance of the system is much closer to the actual value of 0.25 and overestimates slightly. Again the estimates are reasonable and not too far off of the actual parameters. I prefer this model to what was generated in b), however, due to the better sigma^2 estimate. It seems to me this model is doing less noise fitting and that is often a desirable property, especially if prediction is required.
 
-d) Again with beta following a MVN(1, 0.1-0.1-0.1) prior and the same Inverse Gaussian prior
+d) Again with beta following a MVN(1, 0.1-0.1-0.1) prior and the same Inverse Gamma prior
 ```{r}
 # Set up original parameters
 a <- 2
@@ -163,36 +176,44 @@ vCov_param <- matrix(c(0.1, 0, 0,
                        0, 0.1, 0,
                        0, 0, 0.1), byrow = T, ncol = 3, nrow = 3)
 
-mean_post <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+mean_post_beta <- data.frame(x0 = rep(0, N), x1 = rep(0, N), x2 = rep(0, N))
+mean_post_sigma <- rep(0, N)
 
+# Fit
 for(i in 1:N){
   
-  # Posterior parameters
+  # Simulate model
   error <- rnorm(n = dim(predictors)[1], mean = 0, sd = sigma)
   y <- b0 + b1*predictors$x1 + b2 *predictors$x2 + error
+  fitTest <- lm(y ~ x1 + x2, data = predictors) %>% summary()
   
-  mu_Beta <- solve(solve(vCov_param) + t(X) %*% X) %*% (t(X) %*% y)
-  vCov_new <- solve(solve(vCov_param) + t(X) %*% X)
-  b_new <- b + 1/2 * (t(y)%*%y - t(mu_Beta) %*% solve(vCov_new) %*% mu_Beta)
+  # Extract beta hats
+  betaHat <- fitTest$coefficients[,1]
   
-  # Now calculate posterior mean
-    # Posterior is a product of two independent distributions, so posterior mean is a product of two means
-    # Mean for normal is mu_Beta
-    mean_1 <- mu_Beta
-    # Mean for Inverse Gamma is b / (a- 1) = (b_new/2) / (a + n/2 - 1)
-    mean_2 <- (b_new / 2) / (a + n/2 - 1) 
-    
-    # Posterior mean
-    mean_post[i,] <- t(mean_1 %*% mean_2)
-}
+  # Establish posterior parameters
+  mu_n <- solve(t(X) %*% X + solve(vCov_param)) %*% (solve(vCov_param) %*% mu_0 + t(X) %*% X %*% betaHat)
+  vCov_n <- t(X) %*% X + solve(vCov_param)
+  a_n <- a + n / 2
+  b_n <- b + 1/2 * (t(y) %*% y + t(mu_0) %*% solve(vCov_param) %*% mu_0 - t(mu_n) %*% vCov_n %*% mu_n)
+  
+  # Store posterior means for the beta estimates and sigma estimates
+  mean_post_beta[i,] <- t(mu_n)
+  mean_post_sigma[i] <- b_n / (a_n - 1)
 
+}
 # Compare mean of estimated model parameters with the theoretical model value
-mean(mean_post[,1]) - b0
-mean(mean_post[,2]) - b1
-mean(mean_post[,3]) - b2
+mean(mean_post_beta[,1]) - b0
+mean(mean_post_beta[,2]) - b1
+mean(mean_post_beta[,3]) - b2
+mean(mean_post_sigma) - sigma^2
 
 # Compare covariance of estimated parameters with actual covariance matrix
-est_cov_matrix_bayes3 <- cov(mean_post)
-est_cov_matrix_bayes3 - vCovMatrix
+est_cov_matrix_bayes2 <- cov(mean_post_beta)
+est_cov_matrix_bayes2 - vCovMatrix
 ```
+This model generates the estimates that are furthest from the true parameters and has the largest inconsistencies in covariance (albeit rather small). Further, it immensely overestimates sigma^2 and likely generates a lower predictive accuracy as such.
 
+e) Looking at the distribution of estimates in parts b-d, comment on the choice of prior distributions for statistical inference.
+For the most part the prior distributions are not destructive of inference, though some tend to outperform others. I would suggest that of the 3 above Bayesian approaches, c) has the most desirable properties. My intuition as to why this is the case is because both the covariance matrix and the inverse of the covariance matrix have modest values along the diagonal. Further, by setting a prior with greater variance for the parameters that are furthest from being accuracte (prior for Beta_2 is mean 1, variance 3) the model has a better rate of self correcting.
+
+f) In this situation, the frequentist approach seems to be moderately better if the goal is explanatory in nature. The estimates are tighter, sigma^2 is better understood, and I am less likely to make a coding error. If we were to instead have no knowledge of the parameters, the choice may differ. Are we certain it is a relationship between only these two variables and the response? If yes then frequency theory is still plenty fine. But if we are unsure, then Bayesian methods are often superior due to the model uncertainty we can explain (see BMA work by myself and Dani). Since this is an application of bayesian learning (according to Bayesian Linear Regression Wiki), this problem  could see model uncertainty benefits in using a Bayesian approach instead of a frenquentist approach.
