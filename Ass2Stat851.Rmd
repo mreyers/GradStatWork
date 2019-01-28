@@ -1,0 +1,19 @@
+---
+title: "Assignment 2 Stat851"
+author: "Matthew Reyers"
+date: "January 27, 2019"
+output: html_document
+---
+
+
+Question 1: Genotypes A, Aa, and aa are hypothesized to occur with probabilities [theta^2, 2theta(1-theta), (1 - theta)^2]. A multinomial sample of size n has frequencies (Y1, Y2, Y3) of these three genotypes. 
+
+a) Form the log likelihood. Show that the MLE of theta is thetaHat = (2Y1 + Y2) / (2Y1 + 2Y2 + 2Y3)
+Sltn: Written up in workpad. Will submit attach to email/pdf.
+
+b) Show that the Fisher information is 2n / (theta(1-theta)). Use this result to obtain an approximate standard error of thetaHat.
+Sltn: Written up in workpad. Will submit attach to email/pdf.
+```{r}
+
+```
+
