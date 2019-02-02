@@ -36,9 +36,7 @@ sum(vec)
 
 (c) Suggest a ﬁx to mysum() so that mysum(vec)=sum(vec).
 
-```{r cars}
-summary(cars)
-```
+
 
 Underﬂow
 (a) Set the random seed to 1 and simulate 600 standard normal variates.
@@ -149,3 +147,59 @@ hist(chiSqVals) # Not a bad generation
 # Almost have the right idea for the second part, keep mixing up the exponential and uniform random generates
 ```
 
+d) Use the rgamma() and rpois() functions to generate 1000 negative binomial random deviates with parameters r = 2 and p = 0.4 via a gamma mixture of Poisson random variables. Plot a histogram, discuss variance vs. mean in sample, and a few other things.
+
+
+4. Accept-reject method
+a) Given the following scheme for a discrete RV X on the set of positive integers, generate U~U(0,1) and describe X as a function of U. What is the expression for the pmf of f(x)?
+
+The first interval in is bound on [0, 1/2), the next [1/2, 1/4), and so on in increasing powers of (1/2). This means the density associated with each point is the difference between a power of 1/2 and the next power of the same base. So X = 1 has density 1/2, X = 2 has density 1/4, so on and so forth. This means f(x) = (1/2)^x, X belongs to positive integers.
+
+b) Derive the average probability of accepting proposals where U ~ U(0,1) is the uniform deviate used to decide whether to accept the random proposal X  from the distribution g and M is the bounding constant in the accept-reject algorithm.
+
+The average probability of accepting will be 1 / M. Derivation for this can be found attached to this submission as we have written it out by hand.
+
+c) Write a function to draw standard normal deviates X using accept-reject, with proposal distribution for X being g(x|a) for a double exponential distribution on parameter a. 
+```{r}
+library(smoothmest) # For easy double exponential / laplace dist
+
+acc_rej_standard_normal <- function(n, a, M){
+  # Given a number of replicates and a parameter 'a' for the laplace distribution, sample from the standard normal distribution
+  laplace_vals <- rdoublex(n, mu = 0, lambda = a)
+  uni_vals <- runif(n)
+  
+  # Get the densities of the normal values and the proposal density
+  norm_dens <- dnorm(laplace_vals)
+  laplace_dens <- ddoublex(laplace_vals, lambda = a)
+  
+  # Calculate ratio of densities
+  ratio_dens <- norm_dens / (M * laplace_dens)
+  
+  # Accept or reject?
+  results <- data.frame(uni = uni_vals, variates = laplace_vals, ratio = ratio_dens) %>% filter(uni <= ratio)
+  
+  return(results)
+}
+```
+
+d) Test the function defined in c) for efficacy on a = 1 with 1000 replicates. Compare the q-q plot with that of the standard normal.
+```{r}
+the_New_Normal <- acc_rej_standard_normal(1000, 1, 2)
+the_New_Normal %>% select(variates) %>% ggplot(aes(sample = variates)) + geom_qq_line() + stat_qq() + ggtitle("Comparison of Accept-Reject Quantiles with Standard Normal")
+```
+Not quite done with qqnorm but same result. The quantile-quantile plot looks right along what is expected of the standard normal distribution.
+
+
+e) 
+
+f) Time the function with 10000 standard normal deviates under different values of a. Report the timings and address whether the result agres with previous work.
+```{r}
+a <- c(0.1, 0.5, 1.0, 1.5, 2.0)
+n <- 10000
+
+# Time it
+for(i in 1:length(a)){
+  print(system.time(acc_rej_standard_normal(n, a[i], 2))) # Change M to the optimal value when found
+}
+```
+The smaller values of parameter a tend to be better but the difference is nearly negligible, especially at a small number of iterations (n = 10000). 
