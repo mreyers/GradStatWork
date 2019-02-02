@@ -1,0 +1,151 @@
+---
+title: "Homework 1"
+author: "Matthew Reyers and Dani Chu"
+date: "January 9, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+1. Arithmetic exception in a sum.
+(a) Write a simple function mysum() that uses a for loop to add successive elements of a vector.
+```{r}
+mysum <- function(vec){
+  curr.sum <- 0
+  for( i in 1:length(vec)){
+    curr.sum <- curr.sum + vec[i]
+  }
+  return(curr.sum)
+}
+```
+
+(b) Create a vector vec having a single element which diﬀers by several orders of magnitude from the remaining elements. Make one element stand out and keep the other elements to be the same. Construct your vector so that mysum(vec) is not the same as mysum(rev(vec))=sum(vec). 
+- Unsure if one direction should break the function or if I should make use of cancellation errors in f.p.
+```{r}
+vec <- c(1:10, factorial(170)) 
+rev(vec)
+mysum(vec)
+mysum(rev(vec))
+sum(vec)
+```
+
+
+(c) Suggest a ﬁx to mysum() so that mysum(vec)=sum(vec).
+
+```{r cars}
+summary(cars)
+```
+
+Underﬂow
+(a) Set the random seed to 1 and simulate 600 standard normal variates.
+```{r}
+set.seed(1)
+samp <- rnorm(n = 600)
+```
+
+(b) Calculate the likelihood at µ = 0 and σ = 1 based on the ﬁrst n observations, for n = 1,...,600. At what value of n does underﬂow occur?
+```{r}
+likeFun <- function(variates){
+  likelihood <- prod(dnorm(variates))
+  return(likelihood)
+}
+
+logLikeFun <- function(variates){
+  likelihood <- sum(log(dnorm(variates)))
+  return(likelihood)
+}
+
+res <- rep(0, n = 600)
+res2<- rep(0, n = 600)
+for(j in 1:600){
+  res[j] <- likeFun(samp[1:j])
+  res2[j]<- logLikeFun(samp[1:j])
+}
+```
+The value underflowed between entry 521 and 522 as it went from having value `r res[521]` to `r res[522]`.  
+
+(c) Suggest an alternate approach to ﬁnd the maximum likelihood estimate of µ and σ that avoids underﬂow.
+
+The most logical approach to calculating maximum likelihood without underflow would be to utilize a transformation. A common transformation to apply is the log transform as it maintains the order of terms and we are dealing with strictly positive values.Doing this transformation and summing each term, rather than multiplying the non-transformed data, will result in fewer instances of underflow. 
+
+
+2.a) Write an inverse-method approach to sampling from the double exponential distribution.
+```{r}
+doubleExp <- function(u, alpha){
+  if( u >= 0.5 ){
+    # Use the CDF for the positive side of interval
+    x <- -log(2 - 2*u) / alpha 
+  }
+  else{
+    # Use the CDF for the negative side of interval
+    x <- log(2*u) / alpha
+  }
+  return(x)
+}
+
+
+# Test this function
+myVals <- runif(1000) %>% as.matrix(ncol = 1)
+dist <- apply(myVals, MARGIN = 1, FUN = doubleExp, alpha = 2)
+
+# That looks about right
+```
+
+
+2.b) Generate a random variable with a given piecewise distribution using the inverse method.
+```{r}
+pmfGenerator <- function(u){
+  # x = 1 has density 0.3
+  if( u <= 0.3){
+    x = 1
+    return(x)
+  }
+  
+  # x = 2 has density 0.2
+  if( u <= 0.5){
+    x = 2
+    return(x)
+  }
+  
+  # x = 4 has density 0.2
+  if( u <= 0.7){
+    x = 4
+    return(x)
+  }
+  
+  # x = 6 has density 0.3
+  if( u <= 1){
+    x = 6
+    return(x)
+  }
+
+}
+
+pmf <- apply(myVals, MARGIN = 1, FUN = pmfGenerator)
+hist(pmf)
+```
+
+c) Use the rexp() function to generate 1000 deviates. Use these to generate two other distributions, namely the chi square on 4 degree of freedom and the Beta(2,3)
+```{r}
+expDeviates <- rexp(1000) %>% as.matrix(ncol = 1)# Mean of rate  = 1 is 1
+
+# Using the inverse method, we can find the x values from our generated exponentials and plug
+# into the pdfs of interest
+
+# Chi-square
+chiSqDeviates <- function(v){
+  # v is a rexp input
+  x <- 4 * v ^ .5 # By derivation of chi sq wrt exponential
+  return(x)
+}
+
+chiSqVals <- apply(expDeviates, MARGIN = 1, chiSqDeviates) 
+hist(chiSqVals) # Not a bad generation
+
+# Almost have the right idea for the second part, keep mixing up the exponential and uniform random generates
+```
+
