@@ -1,0 +1,211 @@
+---
+title: "Assignment 4 Stat 853"
+author: "Matthew Reyers, Dani Chu"
+date: "March 18, 2019"
+output: html_document
+---
+
+I 1. Show that the initial unnormalized weight function is
+$w_1^*(x_1) = \frac{1}{\beta exp(x_1/2)} \phi(\frac{y_1}{\beta exp(x_1/2)})$
+
+Answer: The important quantities to note before proving this equivalence are the following:
+$w_1^*(x_1) = \frac{\gamma(x_1)}{q(x_1)}$
+
+$\gamma(x_1) = f(y_1 | x_1) *\pi(x_1)$
+
+$q(x_1) = \pi_1(x_1)$
+
+$f(y_1|x_1) = \frac{1}{\sqrt{2\pi \beta^2 exp(x_1)}} exp(\frac{-y_1^2}{2\beta^2exp(x_1)})$ as $y_1|x_1 \sim N(0, \beta^2exp(x_1))$
+
+$\pi_1(x_1) = \frac{\sqrt{1 - \alpha^2}}{\sigma} \phi(\frac{x_1}{\sigma / \sqrt{1-\alpha^2}})$ as $\pi_1(x_1) \sim N(0, \frac{\sigma^2}{1-\alpha^2})$
+
+Now to the actual expression.
+
+$w_1^*(x_1) = \frac{\gamma(x_1)}{q(x_1)} = \frac{f(y_1 | x_1) *\pi(x_1)}{q(x_1)} = \frac{f(y_1 | x_1) *\pi(x_1)}{\pi(x_1)} = f(y_1 | x_1)$
+
+$= \frac{1}{\sqrt{2\pi \beta^2 exp(x_1)}} exp(\frac{-y_1^2}{2\beta^2exp(x_1)}) = \frac{1}{\sqrt{\beta^2 exp(x_1)}} \frac{1}{\sqrt{2\pi}}exp(\frac{-y_1^2}{2\beta^2exp(x_1)}) = \frac{1}{\beta exp(x_1/2)} \phi(\frac{y_1}{\beta exp(x_1/2)})$
+
+
+I 2. Show that the incremental weight function is $\delta_k(x_{1:k}) = \frac{1}{\beta exp(x_1/2)}\phi(\frac{y_k}{\beta exp(x_k/2)})$
+
+Answer: The same formulas from above are relevant in their generalized forms for a particle. 
+
+$\delta_k(x_{1:k}) = \frac{\gamma_n(x_{1:k})}{\gamma_{k-1}(x_{k-1})} * \frac{1}{q_k(x_k|x_{k-1})}$
+
+$= \prod_{i=1}^k f(y_i|x_i) \pi(x_{1:k}) / \prod_{j=1}^{k-1} f(y_j|x_j) \pi(x_{1:k-1}) * 1 / \frac{1}{\sigma} \phi(\frac{x_k - \alpha x_{k-1}}{\sigma}) = f(y_n|x_n) * 1 / \frac{1}{\sigma} \phi(\frac{x_k - \alpha x_{k-1}}{\sigma}) / (1 / \frac{1}{\sigma} \phi(\frac{x_k - \alpha x_{k-1}}{\sigma})) = f(y_n|x_n)$
+
+By similar derivation to $f(y_1|x_1)$, we arrive at $f(y_k |x_k) = \frac{1}{\beta exp(x_k /2)} \phi(\frac{y_k}{\beta exp(x_k /2)})$ as desired.
+
+
+II 
+
+```{r}
+# Demo to illustrate sequential importance sampling (SIS). 
+
+# Example 4 from Doucet & Johansen: Stochastic volatility model.
+# "Volatility" is a latent Markov Chain indexed by times 1..n
+# that impacts the observed prices of some market indicator at these times.
+
+# 1. Start by generating some observed prices from the model.
+
+# Observe prices at each of n=500 time points.
+n=500
+
+# Set the parameters of the model as in D&J:
+alp=0.91; sigma=1.0; beta=0.5
+
+set.seed(123) 
+X=rep(NA,n) # initialize a vector for the latent volatilities 
+V=rnorm(n) # rvs used to construct the Markov chain X of volatilities 
+# Initialize the chain by drawing from the initial distribution.
+X[1]=rnorm(1,mean=0,sd=sigma/sqrt(1-alp^2))
+for(i in 2:n){#Sample subsequent volatility conditional on previous
+  X[i]=alp*X[i-1] + sigma*V[i] 
+}
+W=rnorm(n) # rvs used to construct prices Y from volatilities X
+Y=beta*exp(X/2)*W # observed price data for the market indicator
+
+# Plot these observed prices Y vs. times 1:n and compare this to 
+# the volatilities X that generated them.
+ylims=range(c(Y,X))
+plot(1:n,Y,pch=20,cex=.5,ylim=ylims, xlab="time") #points for observed prices
+lines(1:n,X) #lines for the latent volatility process underlying prices
+
+################################################################
+# 2. Now, pretend we don't know the volatilities but want to use
+# the observed prices to estimate their posterior means E(X_k | y_{1:k}).
+# Use SIS to estimate the posterior means E(X_k | y_{1:k}) of 
+# the volatilities at a given time k given the prices up to that time.
+# Do this for the first 100 times only.
+#
+# Implement SIS using D&J's proposal distributions, which are simply
+# the prior distribution of the latent volatility process. 
+# These resulting sample of particles has to then be weighted to reflect
+# the targeted posterior distribution given the observed price data. 
+# D&J express this proposal distribution by repeated conditioning or 
+# "peeling" as q_1(x_1) \prod_{k=2}^n q_k(x_k|x_1:k-1), where q_1 
+# is a N(0,siq^2/(1-alp^2)) density and q_k(x_k|x_1:k-1) is a
+# N(alp*x_k-1,sigma^2) density.
+#
+# Function to generate proposals for the particle at the initial time
+q.1=function(N) { #initial value proposed
+  return(rnorm(N,mean=0,sd=sigma/sqrt(1-alp^2)))
+}
+#
+# Function to generate proposals for the particle at time k given 
+# its values at previous times 1..k-1
+q.k=function(N,xprev) { #subsequent values given previous values
+  return(rnorm(N,mean=alp*xprev,sd=sigma))
+}
+
+# For SIS, we need the initial unnormalized weight function wst(x_1) and the
+# incremental importance-weight functions delta(x_{1:k}).
+# We set up vectors x_1 and x_k for the particles at times 1 and K,
+# respectively, cotaining N elements for each particle.
+# This allows the initial incremental weights to be updated for all 
+# particles simultaneously.
+wst1=function(x1,y1){ #initial unnormalized weight function
+  return(dnorm(y1,mean=0,sd=beta*exp(x1/2)))
+}
+delta=function(xk,yk){ #incremental importance weight function or IIWF
+  return(dnorm(yk,mean=0,sd=beta*exp(xk/2)))
+}
+
+# SIS algorithm as sketched in class notes
+SIS=function(N,n) {
+  #Set up matrix X.SIS to hold results with rows for the N particles 
+  #and columns for the n times
+  X.SIS=matrix(NA,nrow=N,ncol=n) 
+  wst=matrix(NA,nrow=N,ncol=n) 
+  # sample at time 1 for all particles simultaneously
+  X.SIS[,1]=q.1(N) 
+  wst[,1]=wst1(X.SIS[,1],Y[1]) #get initial unnormalized wts
+  # sample at times 2, ..., n
+  for(k in 2:n) {
+    X.SIS[,k]=q.k(N,X.SIS[,k-1]) #sample at time k for all particles simult
+    wst[,k]=wst[,k-1]*delta(X.SIS[,k],Y[k]) #get unnormalized wts for time k
+  }
+  return(list(X.SIS=X.SIS,wst=wst))
+}
+
+# SIS with N=1000 particles and just n=100 time points
+sout=SIS(N=1000,n=100)
+names(sout)
+# The output matrix sout$X.SIS contains N=1000 particles whose 
+# un-normalized weights are in the output vector sout$wst[,100]. 
+# Together, they provide an estimate of the posterior density 
+# h_n(x_{1:n}|y_{1:n}) of the latent volatilities given the oberved
+# prices over the n=100 time points.
+dim(sout$X.SIS)
+dim(sout$wst)
+#
+# The joint posterior densities h_n(x_{1:n}|y_{1:n}), of the volatilities 
+# are too high-dimensional to visualize, but we can visualize the marginal 
+# posterior densities p(x_k | y_{1:k}) by plotting their estimated 
+# means & SDs for  k=1..n, where n=100, as in Figure 2 of D&J.
+X.mean=X.sd=rep(NA,100) # empty vectors to hold the means & SDs for the plot
+#Get the marginal posterior means and SDs for the plot
+for(k in 1:100) {
+  # For each time point k, need the normalized weights to be able to 
+  # estimate E(X_k | y_{1:k}) and SD(X_k | y_{1:k}) 
+  W=sout$wst[,k]; 
+  W=W/sum(W) #get self-normalized wts 
+  X.mean[k]=sum(W*sout$X.SIS[,k])
+  X.sd[k]=sqrt(sum(W*(sout$X.SIS[,k]-X.mean[k])^2))
+}
+# Plot the estimated, marginal, posterior means E(X_k | y_{1:k})
+# over the 100 time points
+plot(1:100,X.mean,type="l",ylim=range(c(X.mean-2*X.sd,X.mean+2*X.sd)),
+     xlab="time", ylab="post. mean of volatility")
+# Add the two-sd curves
+lines(1:100,X.mean+2*X.sd,lty=2) #upper 2-SD limit
+lines(1:100,X.mean-2*X.sd,lty=2) #lower 2-SD limit
+
+# Superpose the true volatility X on our plot. Note that what is being
+# targetted for estimation is NOT actually the true volatility that 
+# generated the observed prices but rather the posterior mean of the 
+# volatilities given the prices. However, we hope that the posterior
+# mean is close to these true volatilities.
+lines(1:100,X[1:100],col="red") 
+
+# The estimated posterior mean (black) disagrees noticeably with   
+# the underlying volatility (red) around timepoint 81. 
+abline(v=81,col="blue")
+
+# Such disagreements can arise when imbalances in the weights 
+# accumulate over time, and push the SIS estimate of the 
+# posterior distribution of the latent volatility toward a single 
+# point mass. We can see this by plotting the empirical distribution 
+# of the weights at different time points.
+
+# Show histograms of normalized weights at times 2, 10,and 50
+# (Figure 3 of D&J):
+
+# What are the self-normalized weights like at time 2?
+wst2=sout$wst[,2]
+hist(wst2/sum(wst2),xlab="",main="n=2",nclass=100)
+#At time 2, ~150 of the 1000 particles have self-normalized wts ~0
+
+# What are the self-normalized weights like at time 4?
+wst4=sout$wst[,4]
+hist(wst4/sum(wst4),xlab="",main="n=4",nclass=100)
+#At time 4, ~450 of the 1000 particles have self-normalized wts ~0
+
+# What are the self-normalized weights like at time 8?
+wst8=sout$wst[,8]
+hist(wst8/sum(wst8),xlab="",main="n=8",nclass=100)
+#At time 8, ~900 of the 1000 particles have self-normalized wts ~0
+
+# What are the self-normalized weights like at time 50?
+wst50=sout$wst[,50]
+hist(wst50/sum(wst50),xlab="",main="n=50",nclass=100)
+#At time 50, ~1000 of the 1000 particles have self-normalized wts ~0
+
+# In fact, by time 50, most of the mass of the estimated posterior 
+# distribution is concentrated on about six particles.
+#
+# Below are the largest 10 self-normalized wts out of 1000
+rev(sort(wst50/sum(wst50))[991:1000]) 
+
+```
+
