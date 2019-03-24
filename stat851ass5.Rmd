@@ -1,0 +1,69 @@
+---
+title: "Stat 851 Ass 5"
+author: "Matthew Reyers"
+date: "March 23, 2019"
+output: html_document
+---
+
+
+Surely this is the assignment where it all clicks and everything starts to go better. Surely.
+
+1. There are boats. These boats were made of different types, at different times, and operated over different periods. We are interested in the number of accidents occurring for boats of the given parameters as this will inform us on the risk of damage associated.
+
+a) Write down a reasonable preliminary Poisson GLM for the data.
+
+```{r}
+library(tidyverse)
+ships <- read_table2("ship.txt") %>% mutate(Construction = as.character(Construction), Operation = as.character(Operation))
+
+```
+
+Answer: Let $Y_{ijkl} \sim Poisson(t_{l} \theta)$ where $Y_{ijkl}$ is the number of accidents incurred for ship $l$ of type $i$ built in the years $j$ and operated in the period $k$ with respect to its service time $t_{l}$.
+
+I will utilize the log link for the Poisson. This means that there is an offset term to account for as we are modeling the rate here but need to model the mean. As such the systematic component looks as follows.
+
+$log(\mu_{ijkl}) = \mu + log(t_{l}) + \alpha_i + \gamma_j + \psi_k$
+
+$\alpha_0 = 0$
+$\gamma_0 = 0$
+$\psi_0 = 0$
+
+The number of accidents are assumed to be independent between ships.
+
+
+b) Provide an interpretation of the estimated effect of period of operation based on the model in b).
+```{r}
+pois_glm <- glm(Accidents~ ShipType + Construction + Operation, data = ships, family = poisson, offset = log(ServiceTime))
+pois_sum <- summary(pois_glm)
+
+```
+
+The model returns an effect for Operation on the log scale due to the link function used. To more clearly interpret, I will consider the backtransformed version $e^{\psi_k}$. Note that $\psi_0=0$ which corresponds to the operation period of 1960. Therefore the interpretation is that operating the ship in 1975 has a multiplicative effect on the mean number of accidents inccured of $e^{\psi_1}$ = `r exp(pois_sum$coefficients[5,1])`.
+
+# Probably need to mention more about the baseline value fo 1960 #
+
+c) Which ships have the lowest and highest estimated accident rates?
+
+Answer: Estimation would be based on the output of the model above. Since we need a service time, I will feed them all the same service time such that the intercept is identical. 
+```{r}
+ship_types <- unique(ships$ShipType)
+ship_builds <- unique(ships$Construction)
+ship_ops <- unique(ships$Operation)
+
+my_grid <- expand.grid(ship_types, ship_builds, ship_ops)
+names(my_grid) <- c("ShipType", "Construction", "Operation")
+my_grid$ServiceTime <- 1000
+
+output <- predict.glm(pois_glm, newdata = my_grid)
+my_grid$pred <- output
+
+# Pretty plots because why not
+my_grid %>% ggplot(aes(x = Construction, y = pred, col = ShipType, group = ShipType)) + geom_point() + geom_line() +
+  ggtitle("Comparison of Accident predictions for given specifications") + xlab("Year of Construction") + ylab("Predicted Accident Rates") +
+  theme_bw() +
+  facet_wrap(~ Operation)
+```
+
+# Check if I need to model rate or mean here, specifically for conclusion
+The plot above indicates that the ships with the highest rate of accidents tended to be ships of type A, specifically those built in 1970 and operated from 1975-1979. The lowest expected accident rate existed for the ships of type C built in 1960 and operated from 1960-1974.
+
