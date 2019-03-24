@@ -67,3 +67,36 @@ my_grid %>% ggplot(aes(x = Construction, y = pred, col = ShipType, group = ShipT
 # Check if I need to model rate or mean here, specifically for conclusion
 The plot above indicates that the ships with the highest rate of accidents tended to be ships of type A, specifically those built in 1970 and operated from 1975-1979. The lowest expected accident rate existed for the ships of type C built in 1960 and operated from 1960-1974.
 
+
+
+
+2. Working with the data for the interferon relapse study, 
+
+a) Fit a Poisson GLM with log link. What is the assumed variance function and dispersion parameter? Compute the p-value for treatment effect.
+
+```{r}
+relapse <- read_table2("relapse.txt")
+
+basic_glm <- glm(Relapses ~ Treatment, data = relapse, family = poisson(link = "log"))
+res <- anova(basic_glm, test = "Chisq")
+
+```
+
+Evaluating the Poisson distribution such that I can identify the dispresion parameter requires the distribution to be written in the form of $f(x) = exp(\frac{x\theta - B(\theta)}{\phi} + C(y, \phi))$
+
+This can be simply done with the Poisson distribution as it takes the following form:
+$f(x) = exp(xln(\lambda) - \lambda - ln(x!))$
+
+Letting $\theta = ln(\lambda)$, I can rewrite the distribution as $f(x) = exp(x\theta - e^{\theta} - ln(x!))$
+
+Further, $f(x) = exp(\frac{x\theta - e^{\theta}}{1} - ln(x!))$
+
+This means that $B(\theta) = exp(\theta)$ and $\phi = 1$. Deriving the variance function is then done through $Var(x) = \phi * B^{''}(\theta)$
+
+$Var(x) = \lambda$, $\phi = 1$, and so we expect $B^{''}(\theta) = \lambda$. This happens to be the case as the derivative of $B(\theta)$ is $B(theta)$, which evaluates to $\lambda$.
+
+The assumed variance function is then the mean $\lambda$ and the dispersion parameter is assumed to be 1. 
+
+I would then use the chi-sq test for significance as the dispersion parameter is assumed to be 1. If it were not known then the F-test would make more sense. As is, the resulting p-value is `r res$`Pr(>Chi)`[2]`, allowing the conclusion that there is an effect of treatment on the number of relapses a patient would incur over a two year period.
+
+# Review if I can make that statement with respect to the variable and not the link
