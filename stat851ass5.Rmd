@@ -79,7 +79,7 @@ relapse <- read_table2("relapse.txt")
 
 basic_glm <- glm(Relapses ~ Treatment, data = relapse, family = poisson(link = "log"))
 res <- anova(basic_glm, test = "Chisq")
-
+chi_val <- res$`Pr(>Chi)`[2]
 ```
 
 Evaluating the Poisson distribution such that I can identify the dispresion parameter requires the distribution to be written in the form of $f(x) = exp(\frac{x\theta - B(\theta)}{\phi} + C(y, \phi))$
@@ -97,6 +97,58 @@ $Var(x) = \lambda$, $\phi = 1$, and so we expect $B^{''}(\theta) = \lambda$. Thi
 
 The assumed variance function is then the mean $\lambda$ and the dispersion parameter is assumed to be 1. 
 
-I would then use the chi-sq test for significance as the dispersion parameter is assumed to be 1. If it were not known then the F-test would make more sense. As is, the resulting p-value is `r res$`Pr(>Chi)`[2]`, allowing the conclusion that there is an effect of treatment on the number of relapses a patient would incur over a two year period.
+I would then use the chi-sq test for significance as the dispersion parameter is assumed to be 1. If it were not known then the F-test would make more sense. As is, the resulting p-value is `r chi_val`, allowing the conclusion that there is an effect of treatment on the number of relapses a patient would incur over a two year period.
 
 # Review if I can make that statement with respect to the variable and not the link
+
+b) Compute the average and sample variances of the number of relapses per treatment group. Consistent with mean-variance relationship assumed in a)?
+
+```{r}
+relapse %>% group_by(Treatment) %>% summarize(avg = mean(Relapses),
+                                              samp_var = var(Relapses)) %>% ggplot(aes(x = avg, y = samp_var)) + geom_point() +
+  geom_abline(slope = 1, intercept = 0) + ggtitle("Mean Variance Assumption Check") + xlab("Mean") + ylab("Variance")
+```
+
+The expectation is that the mean and variance are roughly equivalent to each other and that the variance grows proportional to the mean. The above plot suggests that the variance does grow with mean and is only a shift away from equivalence. I would be fine proceeding with the assumptions from a).
+
+c) Do the same work for the quasilikelihood as done in a).
+
+```{r}
+quasi_glm <- glm(Relapses ~ Treatment, data = relapse, family = quasipoisson(link = "log"))
+quasi_res <- anova(quasi_glm, test = "F")
+quasi_p <- quasi_res$`Pr(>F)`[2]
+```
+
+The p-value associated with the test in the quasi-likelihood setting is `r quasi_p` which leads to the same conclusion as the previous testing environment though with a more conservative p-value. This is due to the F-test being used in place of the chi-sq test.
+
+
+d) Give the dispersion parameter estimate in c). Is the estimate consistent with conclusion in b)?
+
+```{r}
+quasi_sum <- summary(quasi_glm)
+
+```
+
+The dispersion parameter is estimated to be `r quasi_sum$dispersion`. The value is different from 1 in its estimation but it is not so different that the original approach is unreasonable. More data would be able to draw a definite conclusion along this line.
+
+e) Which p-value would I report as a consultant?
+
+Answer: I would logically report the p-value from c). They lead to the same conclusions in this case but c) is more conservative as it makes fewer assumptions about known values. It always feels safer to stay on the side of caution in the case where Type 1 errors are assumed to be worse than Type 2 errors.
+
+
+3. Income and political party data. Note that income is meant to be listed as catagorical.
+
+a) Produce an interaction plot to show the association between Party and Income. What does your plot suggest about this association?
+```{r}
+income <- read_table2("party.txt") %>% mutate(Income2 = as.character(Income)) %>% mutate(Income2 = fct_reorder(Income2, Income))
+
+income %>% ggplot(aes(x = Income2, y = Count, group = Party, col = Party)) + geom_point() + geom_line() +
+  ggtitle("Interaction plot for Income and Party levels") + xlab("Income level") + ylab("Count") + theme_bw()
+```
+
+First of all, the interaction plot suggests that there is an interaction as there are multiple intersections in this plot. Further, there seems to be a relationship between higher income and conservative identification as well as lower income being more strongly associated with NDP membership.
+
+
+b) Write down a multinomial logit model for these data that will allow me to answer the question of interest. Include necessary parameter constraints. 
+
+# Have not yet covered
