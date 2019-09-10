@@ -209,3 +209,135 @@ rev(sort(wst50/sum(wst50))[991:1000])
 
 ```
 
+III  1. From the form of the incremental weight function, argue that a drop in the trajectory of the weights for particle i at time k indicates that the proposed volatility value is poor in the sense that it has low probability under the conditional target distribution relative to its probability under the conditional importance (proposal) distribution 
+
+Answer: There are a few formulas that will make this easier to demonstrate, all with respect to the particle $x$ in some way. We will be dropping the subscript $i$ for the proof but do note that this is for some $i$th particle $x$.
+
+$\delta (x_{1:k}) = \frac{\gamma_k(x_{1:k})}{\gamma_{k-1}(x_{1:(k-1)})} * \frac{1}{q_k(x_k | x_{k-1})}$
+
+$h_k(x_{1:k}) = \frac{\gamma_k(x_{1:k})}{Z_k}$ where $Z_k$ is some constant.
+
+The argument can then be constructed by showing an alternative way of presenting the conditional target density.
+
+$h(x_k|x_{1:k-1}) = \frac{h(x_k, x_{1:k-1})}{h(x_{1:k-1})} = \frac{h(x_{1:k})}{h(x_{1:k-1})}$
+
+From the equality described earlier relating the target density to the target density up to a constant, it comes as no surprise to recognize that $h_k(x_{1:k}) \propto \gamma_k(x_{1:k})$. The follow up to this is then that the re-expression of the conditional density, $h(x_k|x_{1:k-1})$, is proportional to the target density up to a constant:
+
+$\frac{h(x_{1:k})}{h(x_{1:k-1})} \propto \frac{\gamma_k(x_{1:k})}{\gamma_{k-1}(x_{1:(k-1)})}$
+
+$h(x_k|x_{1:k-1}) \propto \frac{\gamma_k(x_{1:k})}{\gamma_{k-1}(x_{1:(k-1)})}$
+
+Relating this back to the weight function, we see that we can conveniently re-express the result.
+
+$\delta (x_{1:k}) = \frac{\gamma_k(x_{1:k})}{\gamma_{k-1}(x_{1:(k-1)})} * \frac{1}{q_k(x_k | x_{k-1})} \propto h(x_k|x_{1:k-1}) * \frac{1}{q_k(x_k | x_{k-1})}$
+
+The weight is now expressed with respect to the conditional target density and the conditional proposal distribution. A drop off in the weight function can now conveniently be thought of as a large relative difference between a volatility's probability under the target distribution vs. under the proposal distribution, namely that it has a small probability in the target distribution in comparison to the proposal distribution.
+
+IV a) How many unnormalized weights at time 50 have zero weight?
+```{r}
+n_zeros <- as_tibble(wst50) %>% filter(value %in% 0) %>% summarize(n_zero = n())
+```
+
+There are `r n_zeros` zero weighted values in the time 50 evaluation. These are only the underflow values. Many more are essentially negligible.
+
+III 2. Extract the unnormalized weights for times 1, 2, ..., 50 for these six particles and plot the log-base-10 of the unnormalized weight versus time
+
+```{r}
+heavy_particles <- as_tibble(wst50) %>% arrange(desc(value)) %>% filter(row_number() <= 6)
+which_particles <- as_tibble(wst50) %>% mutate(row_n = row_number()) %>% filter(value %in% heavy_particles$value) %>% select(row_n)
+
+time <- 1:50
+weights_over_time <- list()
+for(i in time){
+  weights_over_time[[i]] <- as_tibble(sout$wst[,i]) %>% mutate(row_n = row_number()) %>% filter(row_n %in% which_particles$row_n) %>% select(value) %>% mutate(time_curr = i)
+   
+}
+
+weights_all <- bind_rows(weights_over_time) %>% group_by(time_curr) %>% 
+  mutate(particle = as.character(row_number()), log_weight = log(value, base = 10))
+
+weights_all %>% ggplot(aes(x = time_curr, y = log_weight, group = particle, colour = particle)) +
+  geom_point() + geom_line() + ggtitle("Comparing log_weight of heaviest particles against time") +
+  xlab("Time") + ylab("log weight") + scale_y_continuous(limits = c(-100, 0))
+```
+Need to add more to this plot, in question details
+
+Adding the components requested.
+(i) a particle whose unnormalized weight at time 50 is less than the median of all unnormalized weights at time 50 but otherwise closest to the median, and (ii) the ﬁrst particles to reach an unnormalized weight of zero by time 50 (there are two particles tied for ﬁrst).
+
+```{r}
+close_part <- as_tibble(wst50) %>% mutate(row_n = row_number()) %>% filter(value <median(wst50)) %>% arrange(desc(value)) %>% slice(1) %>% select(row_n)
+
+less_than_med <- list()
+for(i in time){
+  less_than_med[[i]] <- as_tibble(sout$wst[,i]) %>% mutate(row_n = row_number()) %>% filter(row_n %in% close_part$row_n) %>% select(value) %>% mutate(time_curr = i)
+   
+}
+
+# i)
+less_med <- bind_rows(less_than_med) %>% group_by(time_curr) %>% 
+  mutate(particle = "less_med", log_weight = log(value, base = 10))
+
+
+weights_and_med <- bind_rows(weights_all, less_med)
+
+weights_and_med %>% ggplot(aes(x = time_curr, y = log_weight, group = particle, colour = particle)) +
+  geom_point() + geom_line() + ggtitle("Comparing log_weight of heaviest particles against time") +
+  xlab("Time") + ylab("log weight") + scale_y_continuous(limits = c(-100, 0)) 
+
+
+# ii) 
+  # For this need to get fastest to zero
+    # Being lazy, I saw it occurred in column three
+library(reshape2)
+quick_drop <- as_tibble(sout$wst) %>% arrange(V3) %>% slice(1:2) %>% melt( x= row_number()) %>% 
+  filter(row_number() <= 100) %>%
+  mutate(time_curr = ((row_number() - 1) %/% 2 + 1),
+         particle = case_when((row_number() %% 2) == 0 ~ "first_drop",
+                              TRUE ~ "second_drop"),
+         log_weight = log(value, base = 10)) %>% dplyr::select(value, time_curr, particle, log_weight)
+
+weights_and_med_and_drop <- bind_rows(weights_and_med, quick_drop)
+
+weights_and_med_and_drop %>% ggplot(aes(x = time_curr, y = log_weight, group = particle, colour = particle)) +
+  geom_point() + geom_line() + ggtitle("Comparing log_weight of heaviest particles against time") +
+  xlab("Time") + ylab("log weight") + scale_y_continuous(limits = c(-100, 0)) 
+
+
+```
+
+The particles that retained most of their weight (1-6) had generally gradual declines. They experienced no large drops and adjusted in a smooth fashion. On the other hand, the particles in ii) indicate a rapid decline in just a few weight steps. This leads us to believe that one large drop in weight prevents a recovery of weight to at or near that level for future weightings. 
+ # # # Need to flesh this out # # #
+ 
+V 1. How many weights at time 100 are non-zero?
+```{r}
+n_zero <- as_tibble(sout$wst[,100] ) %>% filter(value %in% 0) %>% summarize(n = n())
+```
+There are `r n_zero` at time step 100.
+
+V 2. Use plot with y axis of limits (-200, 0). Plot the particle with maximum weight at time 100, the 100th largest, 200th largest weight, and the first particles to reach an unnormalized weight of zero at time 100. 
+
+```{r}
+# max weight at time 100
+big_boy <- as_tibble(sout$wst[,100]) %>% mutate(row_n = row_number()) %>% arrange(desc(value)) %>% slice(1) %>% dplyr::select(row_n) %>% mutate(particle = "big")
+
+medium_boy <- as_tibble(sout$wst[,100]) %>% mutate(row_n = row_number()) %>% arrange(desc(value)) %>% slice(100) %>% dplyr::select(row_n) %>% mutate(particle = "medium")
+
+small_boy <- as_tibble(sout$wst[,100]) %>% mutate(row_n = row_number()) %>% arrange(desc(value)) %>% slice(200) %>% dplyr::select(row_n) %>% mutate(particle = "small")
+
+smallest_boys <- as_tibble(sout$wst[,3]) %>% mutate(row_n = row_number()) %>% arrange(value) %>% slice(1:2) %>% dplyr::select(row_n) %>% mutate(particle = c("smallest1", "smallest2"))
+
+all_data <- as_tibble(sout$wst) %>% mutate(row_n = row_number())
+
+useful_particles <- bind_rows(big_boy, medium_boy, small_boy, smallest_boys) %>% left_join(all_data) %>% melt(id = c("row_n", "particle")) %>% mutate(time_curr =((row_number() -1) %/% 5) + 1,
+                                                         log_weight = log(value, base = 10))
+
+
+useful_particles %>% ggplot(aes(x = time_curr, y = log_weight, group = particle, colour = particle)) +
+  geom_point() + geom_line() + ggtitle("Comparing log_weight of heaviest particles against time") +
+  xlab("Time") + ylab("log weight") + scale_y_continuous(limits = c(-200, 0)) 
+
+```
+
+The trajectories of the weights that eventually zero out experience sharp declines at one or more points. Those that are non-zero at time 100 have fewer or no sharp declines allowing for a gradual descent.
+# Say better things #
