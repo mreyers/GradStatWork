@@ -60,56 +60,53 @@ data_set_2 <- data_set %>%
   mutate(to_model = map2(data, number_predictors, ~ select(.x, 1:(.y + 1))),
          model = map(to_model, reg_function))
 
-data_set_preds <- data_set_2 %>%
-  rowwise() %>%
-  mutate(sig1 = sum(resid(model)) / model$df.residual,
-         predictions = map(model, ~predict(.x, test))) # Figure out the problem here
-
-
-
-  
-  # mutate(model_1 = pmap(list(y, x1), ~lm(..1 ~ ..2, data = data_set)),
-  #        model_2 = pmap(list(y, x1, x2), ~lm(..1 ~ ..2 + ..3, data = data_set)),
-  #        model_3 = pmap(list(y, x1, x2, x3), ~lm(..1 ~ ..2 + ..3 + ..4, data = data_set)),
-  #        sig1 = map(model_1, ~sum(resid(.)^2) / .$df.residual),
-  #        pred1 = map(model_1, ~predict(., newdata = test[,1])))
-for(counter in c(1:reps)){
-  # Generating Uniform X's and Normal errors
-  x1 <- runif(n=N)
-  x2 <- runif(n=N)
-  x3 <- runif(n=N)
-  ep <- rnorm(n=N)
-  # Setting beta1=1, beta2=1, beta3=0
-  y <- 1*x1 + 1*x2 + ep
-  
-  # reg* is model-fit object, sig* is MSE, pred* is list of predicted values over grid 
-  reg1 <- lm(y~x1)
-  sig1 <- sum(resid(reg1)^2) / reg1$df.residual
-  # Could have used summary(reg1)$sigma^2
-  pred1 <- predict(reg1,newdata=test)
-  
-  reg2 <- lm(y~x1 + x2)
-  sig2 <- sum(resid(reg2)^2) / reg2$df.residual
-  pred2 <- predict(reg2,newdata=test)
-  
-  reg3 <- lm(y~x1 + x2 + x3)
-  sig3 <- sum(resid(reg3)^2) / reg3$df.residual
-  pred3 <- predict(reg3,newdata=test)
-  
-  # Saving all results into storage objects and incrementing row counter
-  save.pred[counter,] <- c(pred1, pred2, pred3)
-  save.sig[counter,] <- c(sig1,sig2,sig3)
-  counter <- counter + 1
+pred_function <- function(model){
+  predictions <- predict(model, newdata = test) %>% 
+    as.data.frame() %>%
+    mutate(id = 1) %>% 
+    nest(-id) %>%
+    pull(.)
 }
 
-# Estimate bias, variance, and MSE of predictions at each X-combo
-mean.pred <- apply(save.pred, MARGIN=2, FUN=mean)
-bias <- mean.pred - rep(mu, times=3)
-var <- apply(save.pred, MARGIN=2, FUN=var)
-MSE <- bias^2 + var
+# Generate predictions
+data_set_preds <- data_set_2 %>%
+  rowwise() %>%
+  mutate(resid = sum(resid(model)^2),
+         df = model$df.residual,
+         sig1 = sum(resid(model)^2) / model$df.residual,
+         predictions = pred_function(model)) # Figure out the problem here
 
-# Vector of model numbers
-model <- rep(c(1,2,3), each=nrow(test))
+# Estimate bias, variance, and MSE of predictions at each X-combo
+data_set_summary <- data_set_preds %>%
+  select(sig1, predictions, number_predictors) %>%
+  unnest(.preserve = c(sig1, number_predictors)) %>%
+  mutate(sample = (row_number() - 1) %% length(mu)) %>%
+  group_by(sample, number_predictors) %>%
+  summarize(mean.pred = mean(.),
+            var.pred = var(.),
+            n_pred = first(number_predictors)) %>%
+  ungroup() %>%
+  mutate(bias = mean.pred - rep(mu, times = 3),
+         MSE = bias^2 + var.pred)
+
+data_set_summary %>%
+  ggplot(aes(x = as.factor(n_pred), y = bias)) +
+  geom_jitter() + 
+  ggtitle("Bias of predictions on test set")
+
+data_set_summary %>%
+  ggplot(aes(x = as.factor(n_pred), y = var.pred)) +
+  geom_jitter() + 
+  scale_y_continuous(limits = c(0, 0.6)) +
+  ggtitle("Variance of predictions on test set")
+
+data_set_summary %>%
+  ggplot(aes(x = as.factor(n_pred), y = MSE)) +
+  geom_jitter() + 
+  scale_y_continuous(limits = c(0, 0.6)) +
+  ggtitle("MSE of predictions on test set")
+
+# Something is off, especially with the 3 predictor setting. Investigate
 
 # Plots
 # (May need to change "win.graph" to "x11" or "quartz")
