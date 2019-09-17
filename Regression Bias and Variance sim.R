@@ -85,6 +85,7 @@ lazy_fn_reg <- function(N, b_1, b_2){
   return(data_summary)
 }
 
+# TODO: Add this to a table
 # baseline
 lazy_fn_reg(20, 1, 1)
 # (a)  Increase the sample size to 100.
