@@ -46,90 +46,67 @@ basic_reg <- function(data, n_vars, sizes){
   }
 }
 
+
 # Awesome, this finally works
-model_sizes <- prostate_tidy %>% slice(1) %>% pull(summ_results) %>% extract2(1) %>% extract('which') 
-prostate_models <- prostate_tidy %>%
-  group_by(set) %>%
+model_sizes_1 <- prostate_tidy %>% slice(1) %>% pull(summ_results) %>% extract2(1) %>% extract('which')
+model_sizes_2 <- prostate_tidy %>% slice(2) %>% pull(summ_results) %>% extract2(1) %>% extract('which')
+
+prostate_models_train1 <- prostate_tidy %>%
+  filter(set %in% "set1") %>%
   mutate(n_vars = list(0:8)) %>% 
   unnest(.preserve = c(data, regsubs, summ_results)) %>%
-  mutate(model_sizes = list(as.matrix(model_sizes$which)),
-         reg_results = pmap(list(data, n_vars, model_sizes), ~ basic_reg(..1, ..2, ..3)))
+  mutate(model_sizes = list(as.matrix(model_sizes_1$which)),
+         reg_results = pmap(list(data, n_vars, model_sizes), ~ basic_reg(..1, ..2, ..3))) %>%
+  mutate(sMSE = map(reg_results, ~ summary(.x)$sigma^2),
+         BIC = map2(reg_results, n_vars, ~ extractAIC(.x, k = .y + 1)[2])) %>%
+  mutate(new_data = holder$data,
+         predictions = map2(reg_results, new_data, ~ predict(.x, newdata = .y)),
+         MSPE = map2(predictions, new_data, ~ mean((.x - .y$lpsa)^2))) %>%
+  select(n_vars, sMSE, BIC, MSPE)
 
-results1 <- matrix(data=NA, nrow=9, ncol=4)
-mod1 <- lm(lpsa ~ 1, data=prostate[which(prostate$set==1),])
-sMSE <- summary(mod1)$sigma^2
-BIC <- extractAIC(mod1, k=log(nrow(prostate[which(prostate$set==1),])))
-pred2 <- predict(mod1, newdata=prostate[which(prostate$set==2),])
-MSPE <- mean((pred2-prostate[which(prostate$set==2),]$lpsa)^2)
-results1[1,] <- c(0, sMSE, BIC[2], MSPE)
+prostate_models_train2 <- prostate_tidy %>%
+  filter(set %in% "set2") %>%
+  mutate(n_vars = list(0:8)) %>% 
+  unnest(.preserve = c(data, regsubs, summ_results)) %>%
+  mutate(model_sizes = list(as.matrix(model_sizes_2$which)),
+         reg_results = pmap(list(data, n_vars, model_sizes), ~ basic_reg(..1, ..2, ..3))) %>%
+  mutate(sMSE = map(reg_results, ~ summary(.x)$sigma^2),
+         BIC = map2(reg_results, n_vars, ~ extractAIC(.x, k = .y + 1)[2])) %>%
+  mutate(new_data = holder$data,
+         predictions = map2(reg_results, new_data, ~ predict(.x, newdata = .y)),
+         MSPE = map2(predictions, new_data, ~ mean((.x - .y$lpsa)^2))) %>%
+  select(n_vars, sMSE, BIC, MSPE)
 
-#Get rid of superfluous variables so that I can call the right variables into the data set each time.
-# Also move response to 1st column to be included every time below.
-prostate2 <- prostate[,c(10,2:9)]
+# Discuss the results with someone, unsure if these are reasonable
+# TODO: Make the desired table
+  # Unsure of how to use MSPE as a measure for training and testing error
 
+prostate_models_train1 %>%
+  gather(Metric, Value, -n_vars) %>%
+  ggplot(aes(x = n_vars, y = as.numeric(Value))) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Performance by Metric for Training Set 1") +
+  xlab("Best Model with given Number of Variables") + ylab("Value") +
+  facet_wrap(~ Metric, scales = "free")
 
-for(v in 1:8){
-  mod1 <- lm(lpsa ~ ., data=prostate2[which(prostate$set==1), summ.1$which[v,]])
-  sMSE <- summary(mod1)$sigma^2
-  BIC <- extractAIC(mod1, k=log(nrow(prostate2[which(prostate$set==1),])))
-  pred2 <- predict(mod1, newdata=prostate2[which(prostate$set==2),])
-  MSPE <- mean((pred2-prostate2[which(prostate$set==2),]$lpsa)^2)
-  results1[v+1,] <- c(v, sMSE, BIC[2], MSPE)
-}
+prostate_models_train2 %>%
+  gather(Metric, Value, -n_vars) %>%
+  ggplot(aes(x = n_vars, y = as.numeric(Value))) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Performance by Metric for Training Set 2") +
+  xlab("Best Model with given Number of Variables") + ylab("Value") +
+  facet_wrap(~ Metric, scales = "free")
 
-results1
-
-
-# All 3 plots together
-x11(width=10,height=5,pointsize=18)
-par(mfrow=c(1,3))
-plot(x=results1[,1], y=results1[,2], xlab="Vars in model", ylab="sample-MSE",
-     main="SampleMSE vs Vars: 1st", type="b")
-plot(x=results1[,1], y=results1[,3], xlab="Vars in model", ylab="BIC",
-     main="BIC vs Vars: 1st", type="b")
-plot(x=results1[,1], y=results1[,4], xlab="Vars in model", ylab="MSPE",
-     main="MSPE vs Vars: 1st", type="b")
-
-##########
-# Repeat for second data set
-
-
-# Fitting the models in succession from smallest to largest.  
-# Fit one-var model. then update to 2-var model.  Could keep going.
-# Each time computing sample-MSE (sMSE), BIC, and mean squared pred. error (MSPE). 
-
-results2 <- matrix(data=NA, nrow=9, ncol=4)
-mod1 <- lm(lpsa ~ 1, data=prostate[which(prostate$set==2),])
-sMSE <- summary(mod1)$sigma^2
-BIC <- extractAIC(mod1, k=log(nrow(prostate[which(prostate$set==2),])))
-pred2 <- predict(mod1, newdata=prostate[which(prostate$set==1),])
-MSPE <- mean((pred2-prostate[which(prostate$set==1),]$lpsa)^2)
-results2[1,] <- c(0, sMSE, BIC[2], MSPE)
-
-#Get rid of superfluous variables so that I can call the right variables into the data set each time.
-# Also move response to 1st column to be included every time below.
-prostate2 <- prostate[,c(10,2:9)]
-
-
-for(v in 1:8){
-  mod1 <- lm(lpsa ~ ., data=prostate2[which(prostate$set==2), summ.2$which[v,]])
-  sMSE <- summary(mod1)$sigma^2
-  BIC <- extractAIC(mod1, k=log(nrow(prostate2[which(prostate$set==2),])))
-  pred2 <- predict(mod1, newdata=prostate2[which(prostate$set==1),])
-  MSPE <- mean((pred2-prostate2[which(prostate$set==1),]$lpsa)^2)
-  results2[v+1,] <- c(v, sMSE, BIC[2], MSPE)
-}
-
-results2
-
-
-# All 3 plots together
-x11(width=10,height=5,pointsize=18)
-par(mfrow=c(1,3))
-plot(x=results2[,1], y=results2[,2], xlab="Vars in model", ylab="sample-MSE",
-     main="SampleMSE vs Vars: 2nd", type="b")
-plot(x=results2[,1], y=results2[,3], xlab="Vars in model", ylab="BIC",
-     main="BIC vs Vars: 2nd", type="b")
-plot(x=results2[,1], y=results2[,4], xlab="Vars in model", ylab="MSPE",
-     main="MSPE vs Vars: 2nd", type="b")
-
+# Together
+prostate_models_train1 %>%
+  mutate(model = "Model 1") %>%
+  bind_rows(prostate_models_train2 %>% mutate(model = "Model 2")) %>%
+  gather(Metric, Value, -n_vars, -model) %>%
+  ggplot(aes(x = n_vars, y = as.numeric(Value), group = model, color = model)) +
+  geom_line() +
+  geom_point() +
+  ggtitle("Performance by Metric for Both Training Sets") +
+  xlab("Best Model with given Number of Variables") + ylab("Value") +
+  facet_wrap(~ Metric, scales = "free")
