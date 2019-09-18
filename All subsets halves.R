@@ -24,6 +24,7 @@ print(prostate_tidy %>% slice(2) %>% pull(summ_results))
 
 # Love it, extract2 accesses lists and extract data frames, allowing for clean piping selection
 prostate_tidy %>% slice(1) %>% pull(summ_results) %>% extract2(1) %>% extract('bic')
+prostate_tidy %>% slice(2) %>% pull(summ_results) %>% extract2(1) %>% extract('bic')
 
 # Cool transpose code
 # mtcars %>%
@@ -51,6 +52,12 @@ basic_reg <- function(data, n_vars, sizes){
 model_sizes_1 <- prostate_tidy %>% slice(1) %>% pull(summ_results) %>% extract2(1) %>% extract('which')
 model_sizes_2 <- prostate_tidy %>% slice(2) %>% pull(summ_results) %>% extract2(1) %>% extract('which')
 
+# Stuff for newdata later
+set1 <- prostate_tidy %>%
+  filter(set %in% "set1")
+set2 <- prostate_tidy %>%
+  filter(set %in% "set2")
+
 prostate_models_train1 <- prostate_tidy %>%
   filter(set %in% "set1") %>%
   mutate(n_vars = list(0:8)) %>% 
@@ -58,8 +65,8 @@ prostate_models_train1 <- prostate_tidy %>%
   mutate(model_sizes = list(as.matrix(model_sizes_1$which)),
          reg_results = pmap(list(data, n_vars, model_sizes), ~ basic_reg(..1, ..2, ..3))) %>%
   mutate(sMSE = map(reg_results, ~ summary(.x)$sigma^2),
-         BIC = map2(reg_results, n_vars, ~ extractAIC(.x, k = .y + 1)[2])) %>%
-  mutate(new_data = holder$data,
+         BIC = pmap(list(reg_results, data), ~ extractAIC(..1, k = log(nrow(..2)))[2])) %>%
+  mutate(new_data = set2$data,
          predictions = map2(reg_results, new_data, ~ predict(.x, newdata = .y)),
          MSPE = map2(predictions, new_data, ~ mean((.x - .y$lpsa)^2))) %>%
   select(n_vars, sMSE, BIC, MSPE)
@@ -71,15 +78,16 @@ prostate_models_train2 <- prostate_tidy %>%
   mutate(model_sizes = list(as.matrix(model_sizes_2$which)),
          reg_results = pmap(list(data, n_vars, model_sizes), ~ basic_reg(..1, ..2, ..3))) %>%
   mutate(sMSE = map(reg_results, ~ summary(.x)$sigma^2),
-         BIC = map2(reg_results, n_vars, ~ extractAIC(.x, k = .y + 1)[2])) %>%
-  mutate(new_data = holder$data,
+         BIC = pmap(list(reg_results, data), ~ extractAIC(..1, k = log(nrow(..2)))[2])) %>%
+  mutate(new_data = set1$data,
          predictions = map2(reg_results, new_data, ~ predict(.x, newdata = .y)),
          MSPE = map2(predictions, new_data, ~ mean((.x - .y$lpsa)^2))) %>%
-  select(n_vars, sMSE, BIC, MSPE)
+  select(n_vars, sMSE, BIC, MSPE, new_data)
 
 # Discuss the results with someone, unsure if these are reasonable
+# Need to do some more work, BIC and sMSE seem to function but MSPE looks wrong for Model / set 2
 # TODO: Make the desired table
-  # Unsure of how to use MSPE as a measure for training and testing error
+  # sMSE training error, MSPE testing error in table
 
 prostate_models_train1 %>%
   gather(Metric, Value, -n_vars) %>%
