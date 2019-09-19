@@ -91,22 +91,34 @@ lazy_fn_reg <- function(N, b_1, b_2){
 }
 
 # baseline
-lazy_fn_reg(20, 1, 1)
+res1 <- lazy_fn_reg(20, 1, 1)
 # (a)  Increase the sample size to 100.
-lazy_fn_reg(100, 1, 1)
+res2 <- lazy_fn_reg(100, 1, 1)
 # (b)  Decrease the sample size to 10.
-lazy_fn_reg(10, 1, 1)
+res3 <- lazy_fn_reg(10, 1, 1)
 # (c)  Increase β1 to 2.
-lazy_fn_reg(20, 2, 1)
+res4 <- lazy_fn_reg(20, 2, 1)
 # (d)  Decrease β1 to 0.5.
-lazy_fn_reg(20, 0.5, 1)
+res5 <- lazy_fn_reg(20, 0.5, 1)
 # (e)  Increase β2 to 2.
-lazy_fn_reg(20, 1, 2)
+res6 <- lazy_fn_reg(20, 1, 2)
 # (f)  Decrease β2 to 0.5.
-lazy_fn_reg(20, 1, 0.5)
+res7 <- lazy_fn_reg(20, 1, 0.5)
 # (g)  Increase both β1 and β2 to 2
-lazy_fn_reg(20, 2, 2)
+res8 <- lazy_fn_reg(20, 2, 2)
+
+rbind(res1, res2, res3, res4, res5, res6, res7, res8) %>%
+  as_tibble() %>%
+  rename(Model1 = V1, Model2 = V2, Model3 = V3)
 ```
+
+The first row is the default conditions while each row after is a) through g) in order. Some notes:
+
+- Changing the sample size impacts the MSPE regardless of the model. Increase the number of samples, decrease the MSPE and vice versa.
+
+- Changing the value of a parameter that is in all of the models does nothing to impact the relative difference in MSPE.
+
+- Changing the value of a parameter that is in some but not all of the models causes the models missing the parameter to take on bias. The amount of bias is more severe the larger the parameter is and can actually decrease the MSPE if the acquired bias is small enough. This can occur because the model does not need to take on the variance of estimating another parameter.
 
 
 ## 2. Run the simulation provided by Tom multiple times, changing some of the parameter values each time. Plot the results and discuss.
@@ -187,8 +199,8 @@ lazy_fn <- function(N, b_1, b_2){
     theme_bw())
   
   
-  return(testing_2 %>% group_by(general_method, n_vars_min) %>%
-           summarize(count_of_min = length(n_vars_min)))
+  # return(testing_2 %>% group_by(general_method, n_vars_min) %>%
+  #          summarize(count_of_min = length(n_vars_min)))
 }
 
 # baseline
@@ -209,4 +221,10 @@ lazy_fn(20, 1, 0.5)
 lazy_fn(20, 2, 2)
 ```
 
-Need to get sMSE and MSPE for models in each setting.
+The first row is the default conditions while each row after is a) through g) in order. Some notes:
+
+- Changing the sample size impacts the ability of all criterions to detect the correct model. A larger sample size makes it easier, a smaller sample size more difficult.
+
+- Increasing the value of a parameter that is not in all of the models increases the bias for the models missing that variable. This means the information criterion tend to favor models including this variable as they take on less variance than the amount of bias reduced.
+
+- Increasing the value of all parameters used in a model make the correct model more easily detectable against models that do not have all the necessary parameters or have excess parameters. This is due to either taking on either too much bias (missing parameters) or too much variance (extra parameters).
