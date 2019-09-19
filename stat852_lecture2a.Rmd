@@ -1,0 +1,212 @@
+---
+title: "stat852_lecture2a"
+author: "Matthew Reyers"
+date: "September 19, 2019"
+output: html_document
+---
+
+# Lecture 2a)
+
+## 1. Run the simulation provided by Tom multiple times, changing some of the parameter values each time. Report MSPE and discuss.
+
+```{r}
+
+lazy_fn_reg <- function(N, b_1, b_2){
+  # Lazy function to do all of the above, inefficient but convenient
+  set.seed(392039853)
+  
+  reps <- 200 # Number of data sets
+  N <- N      # Sample size
+  
+  # Create test data
+  test <- expand.grid(x1 = c(.1,.3,.5,.7,.9), x2 = c(.1,.3,.5,.7,.9), x3=c(.1,.3,.5,.7,.9))
+  
+  # Assuming beta1=1, beta2=1, beta3=0
+  # Create vector of true means = 1*x1 + 1*x2
+  mu <- b_1 * test$x1 + b_2 * test$x2
+  
+  save.pred <- matrix(data=NA, ncol=3*nrow(test), nrow=reps)
+  # Matrix to save estimates of sigma^2
+  #   Rows are replicates, columns are different models 
+  save.sig <- matrix(data=NA, ncol=3, nrow=reps)
+  save.MSPE <- matrix(data=NA, ncol=3, nrow=reps)
+  # Loop to generate data, analyze, and save results
+  for(counter in c(1:reps)){
+    # Generating Uniform X's and Normal errors
+    x1 <- runif(n=N)
+    x2 <- runif(n=N)
+    x3 <- runif(n=N)
+    ep <- rnorm(n=N)
+    # Setting beta1=1, beta2=1, beta3=0
+    y <- b_1 * x1 + b_2 * x2 + ep
+    y_test <- b_1 * test$x1 + b_2 * test$x2
+    
+    # reg* is model-fit object, sig* is MSE, pred* is list of predicted values over grid 
+    reg1 <- lm(y~x1)
+    sig1 <- sum(resid(reg1)^2) / reg1$df.residual
+    # Could have used summary(reg1)$sigma^2
+    pred1 <- predict(reg1,newdata=test)
+    MSPE1 <- mean((pred1 - y_test) ^ 2)
+      
+    reg2 <- lm(y~x1 + x2)
+    sig2 <- sum(resid(reg2)^2) / reg2$df.residual
+    pred2 <- predict(reg2,newdata=test)
+    MSPE2 <- mean((pred2 - y_test) ^ 2)
+    
+    reg3 <- lm(y~x1 + x2 + x3)
+    sig3 <- sum(resid(reg3)^2) / reg3$df.residual
+    pred3 <- predict(reg3,newdata=test)
+    MSPE3 <- mean((pred3 - y_test) ^ 2)
+    
+    # Saving all results into storage objects and incrementing row counter
+    save.pred[counter,] <- c(pred1, pred2, pred3)
+    save.sig[counter,] <- c(sig1,sig2,sig3)
+    save.MSPE[counter,] <- c(MSPE1, MSPE2, MSPE3)
+  }
+  
+  mean.pred <- apply(save.pred, MARGIN=2, FUN=mean)
+  bias <- mean.pred - rep(mu, times=3)
+  var <- apply(save.pred, MARGIN=2, FUN=var)
+  MSE <- bias^2 + var
+  MSPE <- apply(save.MSPE, MARGIN=2, FUN=mean)
+  
+  # Convenient storage
+  # data_set <- data.frame(bias, var, MSE) %>%
+  #   mutate(model = rep(c(1,2,3), each = nrow(test))) %>%
+  #   gather(key = "Metric", value = "Value", -model)
+  
+  # Display in a condensed format
+  # plot(data_set %>%
+  #        ggplot(aes(x = model, y = Value)) +
+  #        geom_jitter() +
+  #        facet_wrap(~Metric, scales = "free"))
+  
+  # Get summary info for var and MSE
+  # data_summary <- data_set %>%
+  #   group_by(Metric, model) %>%
+  #   summarize(avg_val = mean(Value))
+  # 
+  # print(apply(save.sig,MARGIN=2,FUN=mean) )
+  return(MSPE)
+}
+
+# baseline
+lazy_fn_reg(20, 1, 1)
+# (a)  Increase the sample size to 100.
+lazy_fn_reg(100, 1, 1)
+# (b)  Decrease the sample size to 10.
+lazy_fn_reg(10, 1, 1)
+# (c)  Increase β1 to 2.
+lazy_fn_reg(20, 2, 1)
+# (d)  Decrease β1 to 0.5.
+lazy_fn_reg(20, 0.5, 1)
+# (e)  Increase β2 to 2.
+lazy_fn_reg(20, 1, 2)
+# (f)  Decrease β2 to 0.5.
+lazy_fn_reg(20, 1, 0.5)
+# (g)  Increase both β1 and β2 to 2
+lazy_fn_reg(20, 2, 2)
+```
+
+
+## 2. Run the simulation provided by Tom multiple times, changing some of the parameter values each time. Plot the results and discuss.
+
+```{r}
+library(tidyverse)
+
+
+lazy_fn <- function(N, b_1, b_2){
+  # Run all the code from above but write a function to be lazy about it
+  # Not necessarily efficient but more digestible
+  set.seed(392039853)
+  
+  reps <- 200 # Number of data sets
+  N <- N      # Sample size
+  
+  # Prepare for looping over reps
+  counter <- 1
+  save.ic<- matrix(data=NA, ncol=12, nrow=reps)
+  
+  # Loop to generate data, analyze, and save results
+  for(counter in c(1:reps)){
+    x1 <- runif(n=N)
+    x2 <- runif(n=N)
+    x3 <- runif(n=N)
+    ep <- rnorm(n=N)
+    y <- b_1 * x1 + b_2 * x2 + ep
+    
+    # Fit model "*" and store object in "reg*"
+    
+    reg0 <- lm(y~1) # Intercept only
+    aic0 <- extractAIC(reg0,k=2)[2]
+    bic0 <- extractAIC(reg0,k=log(N))[2]
+    aicc0 <- aic0 + 2 * reg0$rank * (reg0$rank + 1) / (N- reg0$rank -1)
+    
+    reg1 <- lm(y~x1)
+    aic1 <- extractAIC(reg1,k=2)[2]
+    bic1 <- extractAIC(reg1,k=log(N))[2]
+    aicc1 <- aic1 + 2 * reg1$rank * (reg1$rank + 1) / (N- reg1$rank -1)
+    
+    reg2 <- lm(y~x1 + x2)
+    aic2 <- extractAIC(reg2,k=2)[2]
+    bic2 <- extractAIC(reg2,k=log(N))[2]
+    aicc2 <- aic2 + 2 * reg2$rank * (reg2$rank + 1) / (N- reg2$rank -1)
+    
+    reg3 <- lm(y~x1 + x2 + x3)
+    aic3 <- extractAIC(reg3,k=2)[2]
+    bic3 <- extractAIC(reg3,k=log(N))[2]
+    aicc3 <- aic3 + 2 * reg3$rank * (reg3$rank + 1) / (N- reg3$rank -1)
+    
+    save.ic[counter,] <- c(aic0, aic1, aic2, aic3, bic0, bic1, bic2, bic3, aicc0, aicc1, aicc2, aicc3)
+  }
+  
+  testing <- save.ic %>%
+    as.data.frame()
+  
+  names(testing) <- c("aic0", "aic1", "aic2", "aic3", 'bic0', 'bic1', "bic2", 'bic3', 'aicc0', "aicc1", 'aicc2', "aicc3")
+  
+  testing_2 <- testing %>%
+    gather(key = "Criterion", value = "Value") %>%
+    group_by(Criterion) %>%
+    mutate(rep = row_number(),
+           general_method = case_when(str_detect(Criterion, "aic[0-9]$") ~ "aic",
+                                      str_detect(Criterion, "bic[0-9]$") ~ "bic",
+                                      TRUE ~ "aicc"),
+           n_vars = str_extract(Criterion, "[0-9]$")) %>%
+    group_by(rep, general_method) %>%
+    arrange(Value) %>% # default is ascending
+    summarize(n_vars_min = first(n_vars))
+  
+  # FOr some reason needed to wrap this to force display
+  plot(testing_2 %>%
+    ggplot(aes(x = n_vars_min)) +
+    geom_bar() +
+    ggtitle("Comparison of Information Criterion") + xlab("Number of Variables in Selected Model") +
+    ylab("Count") +
+    facet_wrap(~ general_method) +
+    theme_bw())
+  
+  
+  return(testing_2 %>% group_by(general_method, n_vars_min) %>%
+           summarize(count_of_min = length(n_vars_min)))
+}
+
+# baseline
+lazy_fn(20, 1, 1)
+# (a)  Increase the sample size to 100.
+lazy_fn(100, 1, 1)
+# (b)  Decrease the sample size to 10.
+lazy_fn(10, 1, 1)
+# (c)  Increase β1 to 2.
+lazy_fn(20, 2, 1)
+# (d)  Decrease β1 to 0.5.
+lazy_fn(20, 0.5, 1)
+# (e)  Increase β2 to 2.
+lazy_fn(20, 1, 2)
+# (f)  Decrease β2 to 0.5.
+lazy_fn(20, 1, 0.5)
+# (g)  Increase both β1 and β2 to 2
+lazy_fn(20, 2, 2)
+```
+
+Need to get sMSE and MSPE for models in each setting.
