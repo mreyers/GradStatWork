@@ -82,7 +82,7 @@ prostate_models_train2 <- prostate_tidy %>%
   mutate(new_data = set1$data,
          predictions = map2(reg_results, new_data, ~ predict(.x, newdata = .y)),
          MSPE = map2(predictions, new_data, ~ mean((.x - .y$lpsa)^2))) %>%
-  select(n_vars, sMSE, BIC, MSPE, new_data)
+  select(n_vars, sMSE, BIC, MSPE, reg_results)
 
 # Discuss the results with someone, unsure if these are reasonable
 # Need to do some more work, BIC and sMSE seem to function but MSPE looks wrong for Model / set 2
