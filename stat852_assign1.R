@@ -1,4 +1,7 @@
 # Matthew Reyers Homework 1 Question 1 
+# Actually, was a good exercise in Tidyverse but just use his sample code here
+# Actual submission will be in the Reg Bias and Var sim file
+
 # Generating independent normal observations, n=20, p=19, sigma=6.
 
 # Simulation of regression to compare linear models with different
