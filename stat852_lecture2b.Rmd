@@ -21,6 +21,7 @@ library(kableExtra)
 library(conflicted)
 conflict_prefer("extract", "magrittr")
 conflict_prefer("filter", "dplyr")
+conflict_prefer("select", "dplyr")
 
 prostate <-  read.table("Prostate.csv", header=TRUE, sep=",", na.strings=" ")
 # head(prostate)
@@ -426,7 +427,7 @@ algorithmic discrepancy.
 
 ## 2.g) For each best model discovered, compare sample MSE and MSPE for the test set. How do these compare?
 
-Assuming unique best models only is asking about the final model selected by each method, the following represents the desired comparison.
+Assuming unique best models only is asking about the final model selected by each method, the following represents the desired comparison. Since all the stepwise methods arrived at the same model, they are refered to as `model_step` below. The all subsets regression generated a different model and is therefore represented as `model_regss`.
 
 ```{r}
 model_regss <- lm(Rings ~ Shucked + Height + Whole + Viscera + Diameter +
@@ -434,10 +435,20 @@ model_regss <- lm(Rings ~ Shucked + Height + Whole + Viscera + Diameter +
                   data = abalone_train)
 
 model_step <- lm(Rings ~ Shell + Shucked + Height + Whole +
-                   Viscera + Diameter + male_dummy + female_dummy + length,
+                   Viscera + Diameter + male_dummy + female_dummy + Length,
                  data = abalone_train) # Model forward is the same
 
+# sMSE
 summary(model_regss)$sigma^2
 summary(model_step)$sigma^2
+
+preds_regss <- predict(model_regss, newdata = abalone_test)
+preds_step <- predict(model_step, newdata = abalone_test)
+
+mean((preds_regss - abalone_test$Rings) ^ 2)
+mean((preds_step - abalone_test$Rings) ^ 2)
 ```
-Revisit later
+
+Revisit tomorrow, I dont think the step model has Length.
+
+The only difference between the models is the inclusion or exclusion of Length as a covariate. Expectedly, the results of sMSE and MSPE are similar. Despite being a small difference, the sMSE and MSPE are both smaller for the all subsets regression model.
