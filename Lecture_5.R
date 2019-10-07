@@ -6,7 +6,6 @@ library(splines)
 
 plot(UKDriverDeaths)
 
-data.frame(Y=as.matrix(dat), date=time(dat))
 mod_df <- data.frame(deaths = as.matrix(UKDriverDeaths), date = time(UKDriverDeaths))
 
 # 1. Plot. Comment on trends
@@ -48,4 +47,167 @@ mod_df %>%
   geom_line(aes(y = nine_df, col = '9 DF'), size = 1.5) +
   geom_line(aes(y = sixteen_df, col = '16 DF'), size = 1.5) +
   geom_line(aes(y = thirtytwo_df, col = '32 DF'), size = 1.5) +
+  ggtitle("Spline Comparison for Driver Deaths") +
   theme_bw()
+
+# A little messy, facet_wrap this in some smart way
+mod_df %>%
+  mutate(one_df = basic_mod$fitted.values,
+         three_df = three_mod$fitted.values,
+         five_df = five_mod$fitted.values,
+         seven_df = seven_mod$fitted.values,
+         nine_df = nine_mod$fitted.values,
+         sixteen_df = sixteen_mod$fitted.values,
+         thirtytwo_df = thirtytwo_mod$fitted.values) %>%
+  gather(DF, Fit, -deaths, -date) %>%
+  mutate(DF.f = factor(DF, levels = c('one_df', 'three_df', 'five_df', 'seven_df', 'nine_df', 
+                                      'sixteen_df', 'thirtytwo_df'))) %>%
+  ggplot(aes(x = date, y = deaths)) +
+  geom_point() + geom_line() +
+  geom_line(aes(y = Fit), col = 'red', size = 1.5) +
+  facet_wrap(~DF.f) +
+  theme_bw()
+
+# It appears to me that the monthly trend is obviously chased with 32 degrees of freedom and 
+# slightly chased with 16 degrees of freedom. Somewhere between 5 degrees of freedom and nine degrees
+# of freedom seems to be about right. From this, I would select 7 degrees of freedom. This selection
+# seems to balance the overall trend with minimal monthly chasing. 
+
+# 3. Fit optimal smoothing spline, compare.
+opt_spline <- smooth.spline(mod_df$date, mod_df$deaths, cv = TRUE) # specify LOOCV
+opt_spline$y
+
+mod_df %>%
+  mutate(seven_df = seven_mod$fitted.values,
+         opt_spline = opt_spline$y) %>%
+  gather(DF, Fit, -deaths, -date) %>%
+  mutate(DF.f = factor(DF, levels = c('seven_df', 'opt_spline'))) %>%
+  ggplot(aes(x = date, y = deaths)) +
+  geom_point() + geom_line() +
+  geom_line(aes(y = Fit), col = 'red', size = 1.5) +
+  facet_wrap(~DF.f) +
+  theme_bw()
+
+# a) How well does the optimal spline meet the objective?
+
+# The optimal smoothing spline does a poor job of meeting our objective. Instead it picks a large
+# number of degrees of freedom and chases the monthly trends. 
+
+# b) Are the DF similar to those from the natural splines?
+
+# The DF differ greatly between the models. My selected model has only 7 DF while the optimal curve
+# has equivalent degrees of freedom of `r opt_spline$df`.
+
+# 4. Fit loess curves with various spans and degrees until one looks good. Plot the results and discuss
+
+loess_1 <- loess(deaths ~ date, data = mod_df, span = 0.75, degree = 1)
+loess_2 <- loess(deaths ~ date, data = mod_df, span = 0.75, degree = 2)
+loess_3 <- loess(deaths ~ date, data = mod_df, span = 0.5, degree = 1)
+loess_4 <- loess(deaths ~ date, data = mod_df, span = 0.5, degree = 2)
+loess_5 <- loess(deaths ~ date, data = mod_df, span = 0.25, degree = 1)
+loess_6 <- loess(deaths ~ date, data = mod_df, span = 0.25, degree = 2)
+loess_7 <- loess(deaths ~ date, data = mod_df, span = 1, degree = 1)
+loess_8 <- loess(deaths ~ date, data = mod_df, span = 1, degree = 2)
+loess_9 <- loess(deaths ~ date, data = mod_df, span = 1.25, degree = 1)
+loess_10 <- loess(deaths ~ date, data = mod_df, span = 1.25, degree = 2)
+
+mod_df %>%
+  mutate(loess_1 = loess_1$fitted,
+         loess_2 = loess_2$fitted,
+         loess_3 = loess_3$fitted,
+         loess_4 = loess_4$fitted,
+         loess_5 = loess_5$fitted,
+         loess_6 = loess_6$fitted,
+         loess_7 = loess_7$fitted,
+         loess_8 = loess_8$fitted,
+         loess_9 = loess_9$fitted,
+         loess_10 = loess_10$fitted) %>%
+  gather(Fit, Value, -deaths, -date) %>%
+  mutate(loess_f = factor(Fit, levels = c('loess_1', 'loess_2', 'loess_3', 'loess_4', 'loess_5',
+                                          'loess_6', 'loess_7', 'loess_8', 'loess_9', 'loess_10'))) %>%
+  ggplot(aes(x = date, y = deaths)) +
+  geom_point() + geom_line() +
+  geom_line(aes(y = Value), size = 1.25, col = 'red') +
+  ggtitle("Loess comparison to original data") +
+  xlab("Date") + ylab("Deaths") +
+  facet_wrap(~ loess_f) + theme_bw()
+
+# Assuming the objective is still to identify the trend and ignore chasing monthly trends, the 4th
+# loess curve above seems to do the most reasonable job. This uses a span of 0.5 and a degree of 2. 
+# Using a span of 0.5 implies a fraction of the data will be used in each fit. A degree of 2 gives
+# the most flexible polynomial possible in the loess function. These decisions make sense in the 
+# context of cyclical data such as the deaths dataset.
+
+
+# a) Repeat with a normal kernel
+
+library(KernSmooth)
+# bandwidth=variance of kernel.
+#
+lp_1 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=.75, degree=1)
+lp_2 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=.75, degree=2)
+lp_3 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=.5, degree=1)
+lp_4 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=.5, degree=2)
+lp_5 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=.25, degree=1)
+lp_6 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=.25, degree=2)
+lp_7 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=1, degree=1)
+lp_8 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=1, degree=2)
+lp_9 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=1.25, degree=1)
+lp_10 <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=1.25, degree=1)
+
+mod_df %>%
+  mutate(lp_1 = lp_1$y,
+         lp_2 = lp_2$y,
+         lp_3 = lp_3$y,
+         lp_4 = lp_4$y,
+         lp_5 = lp_5$y,
+         lp_6 = lp_6$y,
+         lp_7 = lp_7$y,
+         lp_8 = lp_8$y,
+         lp_9 = lp_9$y,
+         lp_10 = lp_10$y) %>%
+  gather(Fit, Value, -deaths, -date) %>%
+  mutate(Fit_f = factor(Fit, levels= c('lp_1', 'lp_2', 'lp_3', 'lp_4', 'lp_5',
+                                       'lp_6', 'lp_7', 'lp_8', 'lp_9', 'lp_10'))) %>%
+  ggplot(aes(x = date, y = deaths)) +
+  geom_point() + geom_line() +
+  geom_line(aes(y = Value), col = 'red', size = 1.25) +
+  ggtitle("Locpoly comparison of Parameter Values") +
+  xlab("Date") + ylab("Deaths") +
+  facet_wrap(~ Fit_f) +
+  theme_bw()
+
+# The plots using a Normal Kernel seem to suggest that lp_1, lp_2, and lp_8 match the trend without
+# excessively chasing errors. I would be comfortable using any of the three. lp_1 uses bandwidth = 0.75, 
+# degree 1. lp_2 uses bandwidth = 0.75, degree 2. And lp_3 uses bandwidth = 1, degree 2.
+
+
+# b) Also try the optimal bandwidth with the normal kernel
+lambda <- dpill(x=mod_df$date, y=mod_df$deaths)
+lp.1.opt <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=lambda, degree=1)
+lp.2.opt <- locpoly(x=mod_df$date, y=mod_df$deaths, gridsize = dim(mod_df)[1], bandwidth=lambda, degree=2)
+
+mod_df %>%
+  mutate(lp_1 = lp.1.opt$y,
+         lp_2 = lp.2.opt$y) %>%
+  gather(Fit, Value, -deaths, -date) %>%
+  mutate(Fit_f = factor(Fit, levels= c('lp_1', 'lp_2'))) %>%
+  ggplot(aes(x = date, y = deaths)) +
+  geom_point() + geom_line() +
+  geom_line(aes(y = Value), col = 'red', size = 1.25) +
+  ggtitle("Locpoly comparison of Parameter Values") +
+  xlab("Date") + ylab("Deaths") +
+  facet_wrap(~ Fit_f) +
+  theme_bw()
+
+# The optimal lambda approach yields, with either degree 1 or 2, a similar fit to the above selections.
+# Neither overly chases the errors while also capturing the overall trend. If I had to choose, I would 
+# take the degree 1 fit (lp_1) here as it is not as heavily pulled by the data points on the boundary.
+
+# 5. Compare the best results from each type of smoother. Is one class of smoothers better for this 
+# problem?
+
+# Given the cyclic nature of the data, I believe the loess smoother to be a more natural fit to this
+# type of data. 
+
+# Make some actual numerical comparisons, using rMSE on a prediction set or something of the sort.
