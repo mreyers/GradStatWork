@@ -1,0 +1,233 @@
+---
+title: "Lecture_7"
+author: "Matthew Reyers"
+date: "October 9, 2019"
+output: html_document
+---
+
+# 1. Complete the default fit for the gam
+
+```{r, message=FALSE, warning=FALSE}
+# Lecture 7 work, dealing with GAMs and PPR
+
+library(glmnet)
+library(tidyverse)
+library(mgcv)
+library(GGally)
+library(gam)
+
+prostate <- read.table("Prostate.csv", header=TRUE, sep=",", na.strings=" ")
+
+set.seed(120401002)
+prostate$set <- ifelse(runif(n=nrow(prostate))>0.5, yes=2, no=1)
+
+prostate_set1 <- prostate %>%
+  filter(set %in% 1)
+
+failed_model <- gam(data = prostate_set1, lpsa ~ s(lcavol) + s(lweight) + s(age) + s(lbph) + svi + s(lcp) +
+      gleason + s(pgg45))
+
+ggpairs(prostate_set1 %>% select(-ID, -train, -set))
+
+# Pairs scatterplot seems to actually suggest that lbph is less useful than lcp, but I will remove lcp for now
+
+fixed_model <- mgcv::gam(data = prostate_set1, lpsa ~ s(lcavol) + s(lweight) + s(age) + s(lbph) + svi +
+                     gleason + s(pgg45))
+
+
+```
+
+# a) Report the p-values of the model, discussing the relative importance of the variables.
+
+```{r}
+
+# a) Report p-values, discuss relative importance
+# The p-values are accessed like this via mgcv::gam. gam::gam implementations do this differently
+model_sum <- summary(fixed_model)
+model_sum$p.pv
+model_sum$s.pv
+
+```
+
+The p-values must be accessed using two different calls, one for linear terms and one for smoothed terms. Overall, the most important terms by p-value tend to be the smoothed lcavol, lweight, and age in that order. Only the linear term for svi seems to be roughly as important as the 3 smoothed terms above.
+
+# b) To get a more parsimonious model, do some model fitting via backwards elimination. Remove variables based on p-value.
+```{r}
+# Testing mgcv::gam vs. gam::gam (default)
+# Tom uses mgcv so it seems to be the case that this approach is more valid
+prostate_set1_reduced <- prostate_set1 %>%
+  dplyr::select(-ID, -train, -set)
+bic_values_mgcv <- rep(0, 8)
+# How can I define a function for this?
+# I want to see if I can generalize this process
+# Needs to be able to make a spline of some terms and not of others
+# Complicated
+# For now, do it in the non-scaleable manual way with p-values
+base_model <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(age) + s(lbph) + svi +
+                     gleason + s(pgg45))
+bic_values_mgcv[1] <- extractAIC(base_model, k = log(nrow(prostate_set1_reduced)))[2]
+
+# The worst in the base_model is pgg45, replace this with lcp
+base_model_lcp <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(age) + s(lbph) + svi +
+                     gleason + s(lcp))
+bic_values_mgcv[2] <- extractAIC(base_model_lcp, k = log(nrow(prostate_set1_reduced)))[2]
+
+# Removing variables, so the highest p-value variable (excluding intercept) is lbph
+reduced_model_1 <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(age) + svi + 
+                       gleason + s(lcp))
+bic_values_mgcv[3] <- extractAIC(reduced_model_1, k = log(nrow(prostate_set1_reduced)))[2]
+
+# now lcp
+reduced_model_2 <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(age) + svi + 
+                       gleason)
+bic_values_mgcv[4] <- extractAIC(reduced_model_2, k = log(nrow(prostate_set1_reduced)))[2]
+
+# now age
+reduced_model_3 <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + svi + gleason)
+bic_values_mgcv[5] <- extractAIC(reduced_model_3, k = log(nrow(prostate_set1_reduced)))[2]
+
+# gleason has the highest p-value so that will be removed next
+reduced_model_4 <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + svi + s(lweight))
+bic_values_mgcv[6] <- extractAIC(reduced_model_4, k = log(nrow(prostate_set1_reduced)))[2]
+
+# svi has the highest p-value so that will be removed next
+reduced_model_5 <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight))
+bic_values_mgcv[7] <- extractAIC(reduced_model_5, k = log(nrow(prostate_set1_reduced)))[2]
+
+# now lweight
+reduced_model_6 <- mgcv::gam(data = prostate_set1_reduced, lpsa ~ s(lweight))
+bic_values_mgcv[8] <- extractAIC(reduced_model_6, k = log(nrow(prostate_set1_reduced)))[2]
+
+plot(bic_values_mgcv)
+
+
+```
+
+```{r}
+# Check if there are differences between mgcv and gam
+# There are, I believe Tom wants us to use mgcv
+
+
+# b) Want a more parsimonious model, do some fitting and describe the path through the models. Use BIC and
+# effective DF in the answer. Backwards elimination process. 
+
+prostate_set1_reduced <- prostate_set1 %>%
+  select(-ID, -train, -set)
+bic_values <- rep(0, 8)
+# How can I define a function for this?
+# I want to see if I can generalize this process
+# Needs to be able to make a spline of some terms and not of others
+# Complicated
+# For now, do it in the non-scaleable manual way with p-values
+base_model <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(age) + s(lbph) + svi +
+                     gleason + s(pgg45))
+bic_values[1] <- extractAIC(base_model, k = log(nrow(prostate_set1_reduced)))[2]
+
+# The worst in the base_model is pgg45, replace this with lcp
+base_model_lcp <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(age) + s(lbph) + svi +
+                     gleason + s(lcp))
+bic_values[2] <- extractAIC(base_model_lcp, k = log(nrow(prostate_set1_reduced)))[2]
+
+# age has the highest p value so that will be removed next
+reduced_model_1 <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(lbph) + svi + 
+                       gleason + s(lcp))
+bic_values[3] <- extractAIC(reduced_model_1, k = log(nrow(prostate_set1_reduced)))[2]
+
+# lbph has the highest p value so that will be removed next
+reduced_model_2 <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + svi + 
+                       gleason + s(lcp))
+bic_values[4] <- extractAIC(reduced_model_2, k = log(nrow(prostate_set1_reduced)))[2]
+
+# Assuming that the highest p-value to be removed is just the highest value that occurs in either
+# the ANOVA for Parametric or Nonparametric effects, lweight is removed next
+reduced_model_3 <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + svi +
+                       gleason + s(lcp))
+bic_values[5] <- extractAIC(reduced_model_3, k = log(nrow(prostate_set1_reduced)))[2]
+
+# # # Continue # # #
+# gleason has the highest p-value so that will be removed next
+reduced_model_4 <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + svi + s(lcp))
+bic_values[6] <- extractAIC(reduced_model_4, k = log(nrow(prostate_set1_reduced)))[2]
+
+# lcp has the highest p-value so that will be removed next
+reduced_model_5 <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + svi)
+bic_values[7] <- extractAIC(reduced_model_5, k = log(nrow(prostate_set1_reduced)))[2]
+
+# Again, despite being a lower p-value in the Parametric effects, the largest p-value is lcavol when considered as a Nonparametric effect so it will be removed next
+reduced_model_6 <-  gam(data = prostate_set1_reduced, lpsa ~ svi)
+bic_values[8] <- extractAIC(reduced_model_6, k = log(nrow(prostate_set1_reduced)))[2]
+
+plot(bic_values)
+
+# A more reasonable way to do things, using the stepGAIC function from gamlss
+# This makes use of the pgg45 variable being the worst predictor and therefore being removed for lcp
+library(gamlss)
+test_mod <- gamlss(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + s(age) + s(lbph) + svi +
+                     gleason + s(lcp))
+gam_step <- stepGAIC(test_mod, scape = list(lower = ~1, upper = ~s(lcavol) + s(lweight) + s(age) + s(lbph) + svi + gleason + s(lcp)), k = log(nrow(prostate_set1_reduced)),
+                     trace = TRUE, direction = "backward")
+
+# Go through the GAM process in the order the step function did to verify
+extractAIC(test_mod, k = log(nrow(prostate_set1_reduced)))
+
+extractAIC(gam(lpsa ~ s(lcavol) + s(lweight) + s(age) + svi + gleason + s(lcp), data = prostate_set1_reduced),
+           k = log(nrow(prostate_set1_reduced)))
+
+extractAIC(gam(lpsa ~ s(lcavol) + s(lweight) + svi + gleason + s(lcp), data = prostate_set1_reduced),
+           k = log(nrow(prostate_set1_reduced)))
+
+extractAIC(gam(lpsa ~ s(lcavol) + s(lweight) + svi + gleason, data = prostate_set1_reduced),
+           k = log(nrow(prostate_set1_reduced)))
+
+selected_gam <- gam(data = prostate_set1_reduced, lpsa ~ s(lcavol) + s(lweight) + svi)
+extractAIC(selected_gam, k = log(nrow(prostate_set1_reduced)))
+
+# Revisit this to understand how BIC differs through the two methods (stepGAIC vs. extractAIC)
+# Selected model feels reasonable but it may be dealing with weird DF values
+# Still more work to do here for ii) and iii)
+
+```
+
+# c) Use the best model above but with only linear terms. Discuss differences.
+
+```{r}
+# FIX THIS, STILL USING OLD APPROACH
+
+
+# c) Replace best model with only linear terms using GAM, get bic. Discuss
+selected_linear_gam <- gam(data = prostate_set1_reduced, lpsa ~ lcavol + lweight + svi)
+extractAIC(selected_linear_gam, k = log(nrow(prostate_set1_reduced)))
+
+# In comparison with the spline model, the BIC of the linear equivalent is actually an improvement. This
+# suggests that the flexibility of splines does not add much to this analysis and actually hinders testing
+# due to it sucking up more degrees of freedom.
+
+```
+
+# 2. Use the same data as the previous splits
+## a) Scale the training data to mean 0, sd 1
+
+```{r}
+# 2. Use the same data for the previous splits to achieve the following
+
+# a) Scale the training data to mean 0, sd 1
+prostate_train_scaled <- prostate_set1_reduced %>% apply(., MARGIN = 2, scale) %>% as.data.frame()
+
+```
+
+## b)
+
+```{r}
+# b) Fit 1, 2, and 3 term PPR regression models to the scaled data. Use a smoothing
+# spline instead of the default smoother. Do not use the max.terms argument
+ppr_oneterm <- ppr(data = prostate_train_scaled, lpsa ~s(lcavol) + s(lweight) + s(age) + s(lbph) + s(svi) +
+      s(gleason) + s(lcp), nterms = 1)
+
+ppr_twoterm <- ppr(data = prostate_train_scaled, lpsa ~s(lcavol) + s(lweight) + s(age) + s(lbph) + s(svi) +
+                     s(gleason) + s(lcp), nterms = 2)
+
+ppr_threeterm <- ppr(data = prostate_train_scaled, lpsa ~s(lcavol) + s(lweight) + s(age) + s(lbph) + s(svi) +
+                     s(gleason) + s(lcp), nterms = 3)
+ppr_oneterm$alpha
+```
+
