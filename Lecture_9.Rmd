@@ -1,0 +1,306 @@
+---
+title: "Lecture_9"
+author: "Matthew Reyers"
+date: "October 16, 2019"
+output: html_document
+---
+
+```{r, echo=FALSE}
+pagebreak <- function() {
+  if(knitr::is_latex_output())
+    return("\\newpage")
+  else
+    return('<div style="page-break-before: always;" />')
+}
+```
+
+# 1. In the Prostate data, use the training set (set=1 from the seed 120401002) and fit MARS models for each degree=1, 2, and 3. Prune the model using backward elimination. Use the penalty defaults in earth
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(earth)
+library(rpart)
+prostate <-  read.table("Prostate.csv", header=TRUE, sep=",", na.strings=" ")
+
+set.seed(120401002) 
+prostate$set <- ifelse(runif(n=nrow(prostate))>0.5, yes=2, no=1)
+
+prostate_train <- prostate %>%
+  filter(set == 1) %>%
+  select(-set, -train, -ID)
+
+prostate_test <- prostate %>%
+  filter(set == 2) %>%
+  select(-set, -train, -ID)
+
+# Fit the MARS models with defaults, using deg = 1,2,3, and prune with backwards elim
+mars_deg1 <- earth(lpsa ~ ., data = prostate_train, degree = 1, pmethod = 'backward')
+mars_deg2 <- earth(lpsa ~ ., data = prostate_train, degree = 2, pmethod = 'backward')
+mars_deg3 <- earth(lpsa ~ ., data = prostate_train, degree = 3, pmethod = 'backward')
+
+```
+
+## a)  Compare the in-sample MSEs and MSPEs on each model to what other methods have done
+
+```{r}
+
+deg1_sMSE <- mean((prostate_train$lpsa - predict(mars_deg1, prostate_train))^2)
+deg2_sMSE <- mean((prostate_train$lpsa - predict(mars_deg2, prostate_train))^2)
+deg3_sMSE <- mean((prostate_train$lpsa - predict(mars_deg3, prostate_train))^2)
+
+deg1_MSPE <- mean((prostate_test$lpsa - predict(mars_deg1, prostate_test))^2)
+deg2_MSPE <- mean((prostate_test$lpsa - predict(mars_deg2, prostate_test))^2)
+deg3_MSPE <- mean((prostate_test$lpsa - predict(mars_deg3, prostate_test))^2)
+
+deg1_sMSE
+deg2_sMSE
+deg3_sMSE
+
+deg1_MSPE
+deg2_MSPE
+deg3_MSPE
+```
+
+
+The sMSE for the degree 2 and degree 3 models is the smallest observed so far over the models that have been fit and evaluated over the first set of prostate data. Other methods, such as all subsets regression and LASSO sMSE values between 0.4 and 0.45 whereas the aforementioned MARS models generate 0.34. In terms of MSPE, only the degree 1 MARS model is comparable with the other models. This suggests that the degree 2 and degree 3 models overfit the data.
+
+
+## b) For each model, find the slope of the lpsa vs. lcavol relationship for all parts of the X space. Note that it is possible that the slope might depend on other variables if there are any cross-product terms in the final model.
+
+```{r}
+
+sm_deg1 <- summary(mars_deg1)
+# Slope for lpsa vs lcavol is -0.466 when lcavol is smaller than 2.02287 and 1.088 when lcavol is larger
+# than 2.02287.
+
+sm_deg2 <- summary(mars_deg2)
+# The slope for lpsa vs lcavol is dependent on the same lcavol threshold as the degree 1 model. The slope
+# for smaller values of lcavol is now -0.3912 and for larger values is 0.9859
+
+sm_deg3 <- summary(mars_deg3)
+# The relationship of lpsa vs lcavol is identical to the degree 2 model.
+
+```
+
+The slope for lpsa vs lcavol in the degree 1 model is -0.466 when lcavol is smaller than 2.02287 and 1.088 when lcavol is larger than 2.02287. Moving to the degree 2 model, the slope for lpsa vs lcavol is dependent on the same lcavol threshold as the degree 1 model. The slope for smaller values of lcavol is now -0.3912 and for larger values is 0.9859. Finally the degree 3 model experiences the same relationships as the degree 2 model.
+
+`r pagebreak()`
+
+# 2. Using the Abalone data, rerun the 20 splits and make sure that you list Sex as a factor. Include MARS among the methods used. In each split, create 7 models: degree 1, 2, and 3, each using default penalties; and the same three using penalty=5. Then also save the “best”, which is whichever of the previous six models has the best generalized R-square (<object>$grsq). Add these seven results to the root MSPE boxplot, and to the relative root MSPE boxplot. How do they compare with other methods?
+
+```{r, message=FALSE, warning=FALSE}
+
+set.seed(890987665)
+abalone <- read_csv("Abalone.csv")
+
+# Remove outliers in height
+abalone <- abalone %>%
+  filter(Height > 0 & Height < 0.5)
+
+# Need to build a function that handles all the splitting
+# Will need a number of folds and from that to create splits
+k <- 20 # N-Folds
+
+r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
+
+abalone_splits <- abalone %>%
+  mutate(folds = r_vec,
+         male_dummy = Sex == 1,
+         female_dummy = Sex == 2, 
+         Sex = as.factor(Sex)) 
+
+# Only need to keep 1 LASSO, GAM, PPR etcetera so some will be commented out below
+fold_set <- data.frame(fold = 1:k, ppr_3_max = rep(0, k), gam_only = rep(0, k),
+                       cp_0_tree = rep(0, k), cp_min_tree = rep(0, k), cp_1se_tree = rep(0, k),
+                       mars_deg1 = rep(0, k), mars_deg2 = rep(0, k), mars_deg3 = rep(0, k),
+                       mars_deg1_p5 = rep(0, k), mars_deg2_p5 = rep(0, k), mars_deg3_p5 = rep(0, k),
+                       mars_best = rep(0, k))
+
+MSPE <- matrix( NA , nrow =k , ncol =4) # Finally killed Lasso 1se
+colnames( MSPE ) <- c("OLS" , "ALLBIC" , "LASSOMIN" , "RELAX")
+
+library(glmnet)
+library(leaps)
+library(BMA)
+library(relaxo)
+
+rescale_2 <- function(x1,x2){scale(x1, center = apply(x2, 2, mean), scale = apply(x2, 2, sd)) 
+}
+
+# Only need to keep 1 LASSO, GAM, PPR etcetera so some will be removed
+# Keep: Lasso MIN, GAM, PPR 3term max
+for(i in 1:k){
+  # Separate the splitting for trees because it uses Sex as a variable rather than the dummy vars
+  abalone_train_split <- abalone_splits %>%
+    filter(folds != i) %>%
+    dplyr::select(-folds, -Sex) %>%
+    dplyr::select(Rings, everything())
+  
+  abalone_train_trees <- abalone_splits %>%
+    filter(folds != i) %>%
+    dplyr::select(-folds, -male_dummy, -female_dummy) %>%
+    dplyr::select(Rings, everything())
+  
+  abalone_test_split <- abalone_splits %>%
+    filter(folds == i) %>%
+    dplyr::select(-folds, -Sex) %>%
+    dplyr::select(Rings, everything())
+  
+  abalone_test_trees <- abalone_splits %>%
+    filter(folds == i) %>%
+    dplyr::select(-folds, -male_dummy, -female_dummy) %>%
+    dplyr::select(Rings, everything())
+  
+  ppr_threeterm_max <- ppr(data = abalone_train_split, Rings ~ ., nterms = 3, max.terms = 6, optlevel = 3, sm.method = 'gcvspline')
+  ppr_threemax_rMSPE <- sqrt(mean((abalone_test_split$Rings - predict(ppr_threeterm_max, abalone_test_split))^2))
+  
+  gam_full <- mgcv::gam(data = abalone_train_split, Rings ~ s(Length) + s(Diameter) + s(Height) +
+                          s(Whole) + s(Shucked) + s(Viscera) + s(Shell) + male_dummy + female_dummy)
+  gam_full_rMSPE <- sqrt(mean((abalone_test_split$Rings - predict(gam_full, abalone_test_split))^2))
+  
+  # # # # Trees # # # #
+  # Model 1
+  cp_0_tree <- rpart(data=abalone_train_trees, Rings ~ ., method="anova", cp = 0)
+  cp_0_tree_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(cp_0_tree, abalone_test_trees))^2))
+  
+  cpt <- cp_0_tree$cptable
+  minrow <- which.min(cpt[,4])
+  cplow.min <- cpt[minrow,1] 
+  cpup.min <- ifelse(minrow==1, yes=1, no=cpt[minrow-1,1])
+  cp.min <- sqrt(cplow.min*cpup.min) 
+  se.row <- min(which(cpt[,4] < cpt[minrow,4]+cpt[minrow,5]))
+  cplow.1se <- cpt[se.row,1] 
+  cpup.1se <- ifelse(se.row==1, yes=1, no=cpt[se.row-1,1]) 
+  cp.1se <- sqrt(cplow.1se*cpup.1se)
+  
+  # Model 2
+  cp_min_tree <- prune(cp_0_tree, cp=cp.min)
+  cp_min_tree_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(cp_min_tree, abalone_test_trees))^2))
+  
+  cp_1se_tree <- prune(cp_0_tree, cp=cp.1se)
+  cp_1se_tree_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(cp_1se_tree, abalone_test_trees))^2))
+  
+  # MARS
+  mars_deg1 <- earth(Rings ~ ., data = abalone_train_trees, degree = 1, pmethod = 'backward')
+  mars_deg2 <- earth(Rings ~ ., data = abalone_train_trees, degree = 2, pmethod = 'backward')
+  mars_deg3 <- earth(Rings ~ ., data = abalone_train_trees, degree = 3, pmethod = 'backward')
+  
+  mars_deg1_p5 <- earth(Rings ~ ., data = abalone_train_trees, degree = 1, pmethod = 'backward', penalty = 5)
+  mars_deg2_p5 <- earth(Rings ~ ., data = abalone_train_trees, degree = 2, pmethod = 'backward', penalty = 5)
+  mars_deg3_p5 <- earth(Rings ~ ., data = abalone_train_trees, degree = 3, pmethod = 'backward', penalty = 5)
+  
+  opt_model_params <- data.frame(index = 1:6) %>%
+    mutate(deg = rep(1:3, times = 2),
+           penalty = c(2, 3, 3, 5, 5, 5),
+           gcv = c(mars_deg1$gcv, mars_deg2$gcv, mars_deg3$gcv, 
+                   mars_deg1_p5$gcv, mars_deg2_p5$gcv, mars_deg3_p5$gcv)) %>%
+    arrange(gcv) %>%
+    slice(1)
+  
+  mars_best <- earth(Rings ~ ., data= abalone_train_trees, degree = opt_model_params$deg, 
+                     pmethod = 'backward', penalty = opt_model_params$penalty)
+  
+  mars_deg1_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(mars_deg1, abalone_test_trees))^2))
+  mars_deg2_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(mars_deg2, abalone_test_trees))^2))
+  mars_deg3_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(mars_deg3, abalone_test_trees))^2))
+  mars_deg1_p5_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(mars_deg1_p5, abalone_test_trees))^2))
+  mars_deg2_p5_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(mars_deg2_p5, abalone_test_trees))^2))
+  mars_deg3_p5_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(mars_deg3_p5, abalone_test_trees))^2))
+  mars_best_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(mars_best, abalone_test_trees))^2))
+  
+  # Fit the models above in order and store
+  fold_set[i, 2] <- ppr_threemax_rMSPE
+  fold_set[i, 3] <- gam_full_rMSPE
+  fold_set[i, 4] <- cp_0_tree_rMSPE
+  fold_set[i, 5] <- cp_min_tree_rMSPE
+  fold_set[i, 6] <- cp_1se_tree_rMSPE
+  fold_set[i, 7] <- mars_deg1_rMSPE
+  fold_set[i, 8] <- mars_deg2_rMSPE
+  fold_set[i, 9] <- mars_deg3_rMSPE
+  fold_set[i, 10] <- mars_deg1_p5_rMSPE
+  fold_set[i, 11] <- mars_deg2_p5_rMSPE
+  fold_set[i, 12] <- mars_deg3_p5_rMSPE
+  fold_set[i, 13] <- mars_best_rMSPE
+  
+  
+  # # # # # 
+  # The other models from previous
+  y.1n <- abalone_train_split$Rings 
+  x.1n <- as.matrix( abalone_train_split %>% dplyr::select(-Rings))
+  y.2n <- abalone_test_split$Rings
+  x.2n <- as.matrix( abalone_test_split %>% dplyr::select(-Rings))
+  
+  # Lin Reg via lsfit
+  olsn <- lsfit( x.1n, y.1n )
+  MSPE[ i ,1] <- mean(( y.2n - cbind(1 , x.2n ) %*% olsn$coef )^2)
+  
+  # BIC model selection via all subsets regression
+  bic_mod <- summary(regsubsets(x.1n, y.1n))
+  opt_bic_mod <- bic_mod$which[bic_mod$bic == min(bic_mod$bic), -1]
+  x.1n_star <- x.1n[, opt_bic_mod] %>% as.data.frame()
+  regss <- lm(y.1n ~ ., data = x.1n_star) 
+  MSPE[ i ,2] <- mean((predict(regss, newdata=x.2n %>% as.data.frame()) - y.2n)^2)
+  
+  # Lasso min and 1 se
+  cv_model <- cv.glmnet(x.1n, y.1n)
+  lasso_min <- glmnet(x.1n, y.1n, lambda = cv_model$lambda.min)
+  MSPE[i, 3] <- mean((predict(lasso_min, newx = x.2n) - y.2n)^2)
+  
+  # relaxo
+  y.1s1 <- scale(y.1n, mean(y.1n), sd(y.1n))
+  y.2s2 <- scale(y.2n, mean(y.2n), sd(y.2n))
+  x.1n <- scale(x.1n)
+  x.2n <- scale(x.2n)
+  x.1s1 <- rescale_2(x.1n, x.1n)
+  x.2s1 <- rescale_2(x.2n, x.1n)
+  x.2s2 <- rescale_2(x.2n, x.2n)
+  x.1s2 <- rescale_2(x.1n, x.2n)
+  
+  relaxed_lasso <- cvrelaxo(x.1s1, y.1s1)
+  predrel.1.1 <- predict(relaxed_lasso, newX=x.1s1, lambda=relaxed_lasso$lambda, phi=relaxed_lasso$phi)
+  predrely.1.1 <- predrel.1.1*sd(y.1n) + mean(y.1n)
+  
+  predrel.2.1 <- predict(relaxed_lasso, newX=x.2s1, lambda=relaxed_lasso$lambda, phi=relaxed_lasso$phi)
+  predrely.2.1 <- predrel.2.1 *sd(y.2n) + mean(y.2n)
+  MSPE[i, 4] <- mean((y.2n - predrely.2.1)^2)
+  
+  
+}
+
+root_MSPE <- MSPE %>%
+  apply(., MARGIN = 2, sqrt) %>%
+  as.data.frame() %>%
+  mutate(fold = 1:20) %>%
+  left_join(fold_set) 
+
+root_MSPE %>%
+  gather(Method, Value, -fold) %>%
+  mutate(Method.F = factor(Method, levels = c("OLS" , "ALLBIC" , "LASSOMIN",
+                                              "RELAX", "ppr_3_max", "gam_only", "cp_0_tree", "cp_min_tree",
+                                              "cp_1se_tree",
+                                              "mars_deg1", "mars_deg2", "mars_deg3",
+                                              "mars_deg1_p5", "mars_deg2_p5", "mars_deg3_p5",
+                                              "mars_best"))) %>%
+  ggplot(aes(x = Method.F, y = Value)) +
+  geom_boxplot() +
+  ggtitle("Root MSPE comparison across Gam, PPR, and Trees") +
+  theme_bw()
+
+row_mins <- apply(X=root_MSPE %>% dplyr::select(-fold), MARGIN = 1, FUN = min)
+
+as.data.frame(root_MSPE %>% dplyr::select(-fold)/ row_mins) %>%
+  gather(Method, Value) %>%
+  mutate(Method.F = factor(Method, levels = c("OLS" , "ALLBIC" , "LASSOMIN",
+                                              "RELAX", "ppr_3_max", "gam_only", "cp_0_tree", "cp_min_tree",
+                                              "cp_1se_tree",
+                                              "mars_deg1", "mars_deg2", "mars_deg3",
+                                              "mars_deg1_p5", "mars_deg2_p5", "mars_deg3_p5",
+                                              "mars_best"))) %>%
+  ggplot(aes(x = Method.F, y = Value)) +
+  geom_boxplot() + 
+  ggtitle("Relative Root MSPE comparison across all tested models") +
+  theme_bw()
+
+```
+
+Looking at the results of the above boxplots, MARS seems to perform well for the given Abalone data set. Only the Projection Pursuit Regression and GAM offer similar results to the MARS models. In comparison specifically with the Regression Tree methods, it is clear that MARS is an improvement on that original concept.

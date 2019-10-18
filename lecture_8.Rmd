@@ -1,0 +1,349 @@
+---
+title: "Lecture_8"
+author: "Matthew Reyers"
+date: "October 16, 2019"
+output: html_document
+---
+
+```{r, echo=FALSE}
+pagebreak <- function() {
+  if(knitr::is_latex_output())
+    return("\\newpage")
+  else
+    return('<div style="page-break-before: always;" />')
+}
+```
+
+# Lecture 8
+
+# 1. With Abalone data, use original 75/25 split. Do not create any indicators. Make Sex a factor.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(kableExtra)
+
+abalone <- read_csv("Abalone.csv")
+
+abalone <- abalone %>% 
+  mutate(Sex = as.factor(Sex)) %>%
+  dplyr::select(Rings, everything())
+
+# Remove outliers in height
+abalone <- abalone %>%
+  filter(Height > 0 & Height < 0.5)
+
+set.seed(29003092)
+
+# Default split from last time
+abalone <- abalone %>%
+  mutate(train = ifelse(runif(nrow(.)) > 0.75, "test", "train"))
+
+abalone_train <- abalone %>% filter(train %in% "train") %>% dplyr::select(-train) %>% as.data.frame()
+abalone_test <- abalone %>% filter(train %in% "test") %>% dplyr::select(-train) %>% as.data.frame()
+
+```
+
+## a) Use training set to build full reg trees, as well as optimal pruned trees at min-cp and 1SE
+
+```{r}
+library(rpart)
+library(rpart.plot)
+abalone.tree <- rpart(data=abalone_train, Rings ~ ., method="anova")
+cpt <- abalone.tree$cptable
+
+# Find location of minimum error
+minrow <- which.min(cpt[,4])
+
+# Take geometric mean of cp values at min error and one step up 
+cplow.min <- cpt[minrow,1] # Complexity parameter in minimized row
+cpup.min <- ifelse(minrow==1, yes=1, no=cpt[minrow-1,1]) # Complexity parameter at previous step, 1 if first
+cp.min <- sqrt(cplow.min*cpup.min) # Geometric mean of the min and the row prior
+
+# Find smallest row where error is below +1SE
+se.row <- min(which(cpt[,4] < cpt[minrow,4]+cpt[minrow,5])) # minimize cp.min + 1SE
+
+# Take geometric mean of cp values at min error and one step up 
+cplow.1se <- cpt[se.row,1] # Choose the minimizing row
+cpup.1se <- ifelse(se.row==1, yes=1, no=cpt[se.row-1,1]) # Get previous value for geo mean
+cp.1se <- sqrt(cplow.1se*cpup.1se)
+
+# Do pruning each way
+abalone.prune.min <- prune(abalone.tree, cp=cp.min)
+abalone.prune.1se <- prune(abalone.tree, cp=cp.1se)
+
+
+```
+
+### i) Report the CP table, plot the CV error, and present the cp values for pruning 
+
+```{r}
+# i) Report the CP table, plot the CV error, and present the cp values for pruning 
+plotcp(abalone.tree)
+
+# Kable this table later
+kable(abalone.tree$cptable) %>% kable_styling()
+
+# cp values
+cp.min
+cp.1se
+
+```
+
+
+### ii) Compare the variables used to the models that have been selected before.
+
+```{r}
+prp(abalone.tree)
+```
+
+All of the splits used in the decision tree involve Shell, Shucked, Sex, and Whole. 
+# ^ ^ ^ ^ Compare to others later
+
+### iii) Compute the training and test errors. How do they compare to other models wehave tried on these data?
+
+```{r}
+pred.train <- predict(abalone.tree, newdata=abalone_train)
+sMSE <- mean((abalone_train$Rings - pred.train)^2)
+
+pred.test <- predict(abalone.tree, newdata=abalone_test)
+MSPE <- mean((abalone_test$Rings - pred.test)^2)
+
+sMSE
+MSPE
+```
+
+These values are larger than previous. They look quite poor in comparison.
+
+## b) Look at CV error estimates in CP table. Is there evidence that the splitting has terminated early?
+
+```{r}
+kable(abalone.tree$cptable) %>% kable_styling()
+```
+
+The relative error is still decreasing by almost 0.01 each iteration. This algorithm may have terminated too early as it seems there is still benefit to be gained.
+
+## c) Repeat the splitting, setting cp=0 so very large trees are built. Prune using both methods.
+
+```{r}
+
+abalone.tree.2 <- rpart(data=abalone_train, Rings ~ ., method="anova", cp = 0)
+cpt <- abalone.tree.2$cptable
+
+# Find location of minimum error
+minrow <- which.min(cpt[,4])
+
+# Take geometric mean of cp values at min error and one step up 
+cplow.min <- cpt[minrow,1] # Complexity parameter in minimized row
+cpup.min <- ifelse(minrow==1, yes=1, no=cpt[minrow-1,1]) # Complexity parameter at previous step, 1 if first
+cp.min <- sqrt(cplow.min*cpup.min) # Geometric mean of the min and the row prior
+
+# Find smallest row where error is below +1SE
+se.row <- min(which(cpt[,4] < cpt[minrow,4]+cpt[minrow,5])) # minimize cp.min + 1SE
+
+# Take geometric mean of cp values at min error and one step up 
+cplow.1se <- cpt[se.row,1] # Choose the minimizing row
+cpup.1se <- ifelse(se.row==1, yes=1, no=cpt[se.row-1,1]) # Get previous value for geo mean
+cp.1se <- sqrt(cplow.1se*cpup.1se)
+
+# Do pruning each way
+abalone.prune.min.2 <- prune(abalone.tree.2, cp=cp.min)
+abalone.prune.1se.2 <- prune(abalone.tree.2, cp=cp.1se)
+
+```
+
+### i) The CP Table is too big to print. Show the plot of the CV relative error and comment on the pattern you see: why does it look this way?
+
+```{r}
+plotcp(abalone.tree.2)  
+```
+
+The CV relative error is calculated by cross validation, meaning that it is not bound to be monotonic. This explains the slight uptick we see in its value as the complexity parameter decreases, a sign of a losing battle with the bias-variance tradeoff.
+
+
+### ii) What value of CP is used for the pruning each way? Are the trees quite different from what was used in Part (a)?
+
+```{r}
+
+cp.min
+cp.1se
+prp(abalone.prune.min.2)
+prp(abalone.prune.1se.2)
+
+```
+
+The cp values being used are not overly different, only separated by a factor of 3 (which is small due to the scale of the cp values). Surprisingly, this results in a rather large distance between the two trees. The larger cp value in the 1se tree cuts many more branches from the tree than its less stringent competitor using the minimum. Further, the minimum tree is quite different from the trees generated in a) while the 1se tree is much more similar.
+
+`r pagebreak()`
+
+# 2. Rerun the 20 splits adding three regression trees: Full, min-CV pruned, 1SE-pruned. Fit full tree with cp = 0. Make sure Sex is a factor (only for the trees) and rerun predictions for all methods. Add to the rootMSPE and relative rootMSPE plots.
+
+```{r, message=FALSE, warning=FALSE}
+
+set.seed(890987665)
+abalone <- read_csv("Abalone.csv")
+
+# Remove outliers in height
+abalone <- abalone %>%
+  filter(Height > 0 & Height < 0.5)
+
+# Need to build a function that handles all the splitting
+# Will need a number of folds and from that to create splits
+k <- 20 # N-Folds
+
+r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
+
+abalone_splits <- abalone %>%
+  mutate(folds = r_vec,
+         male_dummy = Sex == 1,
+         female_dummy = Sex == 2, 
+         Sex = as.factor(Sex)) 
+
+# Only need to keep 1 LASSO, GAM, PPR etcetera so some will be commented out below
+fold_set <- data.frame(fold = 1:k, ppr_3_max = rep(0, k), gam_only = rep(0, k),
+                       cp_0_tree = rep(0, k), cp_min_tree = rep(0, k), cp_1se_tree = rep(0, k))
+
+MSPE <- matrix( NA , nrow =k , ncol =4) # Finally killed Lasso 1se
+colnames( MSPE ) <- c("OLS" , "ALLBIC" , "LASSOMIN" , "RELAX")
+
+library(glmnet)
+library(leaps)
+library(BMA)
+library(relaxo)
+
+rescale_2 <- function(x1,x2){scale(x1, center = apply(x2, 2, mean), scale = apply(x2, 2, sd)) 
+}
+
+# Only need to keep 1 LASSO, GAM, PPR etcetera so some will be removed
+# Keep: Lasso MIN, GAM, PPR 3term max
+for(i in 1:k){
+  # Separate the splitting for trees because it uses Sex as a variable rather than the dummy vars
+  abalone_train_split <- abalone_splits %>%
+    filter(folds != i) %>%
+    dplyr::select(-folds, -Sex) %>%
+    dplyr::select(Rings, everything())
+  
+  abalone_train_trees <- abalone_splits %>%
+    filter(folds != i) %>%
+    dplyr::select(-folds, -male_dummy, -female_dummy) %>%
+    dplyr::select(Rings, everything())
+  
+  abalone_test_split <- abalone_splits %>%
+    filter(folds == i) %>%
+    dplyr::select(-folds, -Sex) %>%
+    dplyr::select(Rings, everything())
+  
+  abalone_test_trees <- abalone_splits %>%
+    filter(folds == i) %>%
+    dplyr::select(-folds, -male_dummy, -female_dummy) %>%
+    dplyr::select(Rings, everything())
+  
+  ppr_threeterm_max <- ppr(data = abalone_train_split, Rings ~ ., nterms = 3, max.terms = 6, optlevel = 3, sm.method = 'gcvspline')
+  ppr_threemax_rMSPE <- sqrt(mean((abalone_test_split$Rings - predict(ppr_threeterm_max, abalone_test_split))^2))
+  
+  gam_full <- mgcv::gam(data = abalone_train_split, Rings ~ s(Length) + s(Diameter) + s(Height) +
+                          s(Whole) + s(Shucked) + s(Viscera) + s(Shell) + male_dummy + female_dummy)
+  gam_full_rMSPE <- sqrt(mean((abalone_test_split$Rings - predict(gam_full, abalone_test_split))^2))
+  
+  # # # # Trees # # # #
+  # Model 1
+  cp_0_tree <- rpart(data=abalone_train_trees, Rings ~ ., method="anova", cp = 0)
+  cp_0_tree_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(cp_0_tree, abalone_test_trees))^2))
+  
+  cpt <- cp_0_tree$cptable
+  minrow <- which.min(cpt[,4])
+  cplow.min <- cpt[minrow,1] 
+  cpup.min <- ifelse(minrow==1, yes=1, no=cpt[minrow-1,1])
+  cp.min <- sqrt(cplow.min*cpup.min) 
+  se.row <- min(which(cpt[,4] < cpt[minrow,4]+cpt[minrow,5]))
+  cplow.1se <- cpt[se.row,1] 
+  cpup.1se <- ifelse(se.row==1, yes=1, no=cpt[se.row-1,1]) 
+  cp.1se <- sqrt(cplow.1se*cpup.1se)
+  
+  # Model 2
+  cp_min_tree <- prune(cp_0_tree, cp=cp.min)
+  cp_min_tree_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(cp_min_tree, abalone_test_trees))^2))
+  
+  cp_1se_tree <- prune(cp_0_tree, cp=cp.1se)
+  cp_1se_tree_rMSPE <- sqrt(mean((abalone_test_trees$Rings - predict(cp_1se_tree, abalone_test_trees))^2))
+  
+  # Fit the models above in order and store
+  fold_set[i, 2] <- ppr_threemax_rMSPE
+  fold_set[i, 3] <- gam_full_rMSPE
+  fold_set[i, 4] <- cp_0_tree_rMSPE
+  fold_set[i, 5] <- cp_min_tree_rMSPE
+  fold_set[i, 6] <- cp_1se_tree_rMSPE
+  
+  
+  # The other models from previous
+  y.1n <- abalone_train_split$Rings 
+  x.1n <- as.matrix( abalone_train_split %>% dplyr::select(-Rings))
+  y.2n <- abalone_test_split$Rings
+  x.2n <- as.matrix( abalone_test_split %>% dplyr::select(-Rings))
+  
+  # Lin Reg via lsfit
+  olsn <- lsfit( x.1n, y.1n )
+  MSPE[ i ,1] <- mean(( y.2n - cbind(1 , x.2n ) %*% olsn$coef )^2)
+  
+  # BIC model selection via all subsets regression
+  bic_mod <- summary(regsubsets(x.1n, y.1n))
+  opt_bic_mod <- bic_mod$which[bic_mod$bic == min(bic_mod$bic), -1]
+  x.1n_star <- x.1n[, opt_bic_mod] %>% as.data.frame()
+  regss <- lm(y.1n ~ ., data = x.1n_star) 
+  MSPE[ i ,2] <- mean((predict(regss, newdata=x.2n %>% as.data.frame()) - y.2n)^2)
+  
+  # Lasso min and 1 se
+  cv_model <- cv.glmnet(x.1n, y.1n)
+  lasso_min <- glmnet(x.1n, y.1n, lambda = cv_model$lambda.min)
+  MSPE[i, 3] <- mean((predict(lasso_min, newx = x.2n) - y.2n)^2)
+  
+  # relaxo
+  y.1s1 <- scale(y.1n, mean(y.1n), sd(y.1n))
+  y.2s2 <- scale(y.2n, mean(y.2n), sd(y.2n))
+  x.1n <- scale(x.1n)
+  x.2n <- scale(x.2n)
+  x.1s1 <- rescale_2(x.1n, x.1n)
+  x.2s1 <- rescale_2(x.2n, x.1n)
+  x.2s2 <- rescale_2(x.2n, x.2n)
+  x.1s2 <- rescale_2(x.1n, x.2n)
+  
+  relaxed_lasso <- cvrelaxo(x.1s1, y.1s1)
+  predrel.1.1 <- predict(relaxed_lasso, newX=x.1s1, lambda=relaxed_lasso$lambda, phi=relaxed_lasso$phi)
+  predrely.1.1 <- predrel.1.1*sd(y.1n) + mean(y.1n)
+  
+  predrel.2.1 <- predict(relaxed_lasso, newX=x.2s1, lambda=relaxed_lasso$lambda, phi=relaxed_lasso$phi)
+  predrely.2.1 <- predrel.2.1 *sd(y.2n) + mean(y.2n)
+  MSPE[i, 4] <- mean((y.2n - predrely.2.1)^2)
+  
+  
+}
+
+root_MSPE <- MSPE %>%
+  apply(., MARGIN = 2, sqrt) %>%
+  as.data.frame() %>%
+  mutate(fold = 1:20) %>%
+  left_join(fold_set) 
+
+root_MSPE %>%
+  gather(Method, Value, -fold) %>%
+  mutate(Method.F = factor(Method, levels = c("OLS" , "ALLBIC" , "LASSOMIN",
+                                              "RELAX", "ppr_3_max", "gam_only", "cp_0_tree", "cp_min_tree", "cp_1se_tree"))) %>%
+  ggplot(aes(x = Method.F, y = Value)) +
+  geom_boxplot() +
+  ggtitle("Root MSPE comparison across Gam, PPR, and Trees") +
+  theme_bw()
+
+row_mins <- apply(X=root_MSPE %>% dplyr::select(-fold), MARGIN = 1, FUN = min)
+
+as.data.frame(root_MSPE %>% dplyr::select(-fold)/ row_mins) %>%
+  gather(Method, Value) %>%
+  mutate(Method.F = factor(Method, levels = c("OLS" , "ALLBIC" , "LASSOMIN",
+                                              "RELAX", "ppr_3_max", "gam_only", "cp_0_tree", "cp_min_tree", "cp_1se_tree"))) %>%
+  ggplot(aes(x = Method.F, y = Value)) +
+  geom_boxplot() + 
+  ggtitle("Relative Root MSPE comparison across all tested models") +
+  theme_bw()
+
+```
+
+
+Comparing the new prediction methods, they are reasonably treated as a worse predictive tool. I am able to get better performance from all of the other methods than from trees. I do not intend to be using these as predictive models in pretty much any application.
