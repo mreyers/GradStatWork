@@ -23,7 +23,7 @@ cluster %>%
 set_default_cluster(cluster)
 
 
-
+# Go back and run this with 100 Neural Nets or whatever number I choose
 
 # 1. In the Prostate data, use the training set to run neural nets (nnet()) with all
 # combinations of (1, 3, 5, 7, and 10) hidden nodes, and (0, 0.001, 0.1, 1, and 2) decay. 
@@ -207,11 +207,20 @@ splitFun <- function(train, test, size, decay){
   #          predictions = map2(test, nnet_obj, ~ predict(.y, .x)),
   #          MSPR = map2_dbl(test, predictions, ~ mean((.x$lpsa - predictions)^2))) # Complete these two statements 
   # 
-  nnet_obj <- nnet(lpsa ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
-                   maxit = 500)
+  MSE.final <- 9e99
+  for(i in 1:100){
+    nnet_obj <- nnet(lpsa ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
+                     maxit = 500)
+    MSE <- nnet_obj$value/nrow(train)
+    if(MSE < MSE.final){ 
+      MSE.final <- MSE
+      nn.final <- nnet_obj
+    }
+  }
   
-  sMSE <- nnet_obj$value / nrow(train)
-  predictions <- predict(nnet_obj, test)
+  
+  sMSE <- nn.final$value / nrow(train)
+  predictions <- predict(nn.final, test)
   MSPR <- mean((test$lpsa - predictions)^2)
   
   measures <- data.frame(sMSE = sMSE, MSPR = MSPR)
@@ -219,6 +228,15 @@ splitFun <- function(train, test, size, decay){
 }
 
 # Data heavy approach
+cluster %>%
+  cluster_library("tidyverse") %>%
+  cluster_library("nnet") %>%
+  cluster_assign_value("boot_train", boot_train) %>%
+  cluster_assign_value("boot_test", boot_test) %>%
+  cluster_assign_value("splitFun", splitFun)
+
+
+tic()
 boot_1_df <- tibble(B = 1:B, prostate = prostate$data) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
@@ -229,10 +247,18 @@ split_res <- grid %>% nest()
 boot_1_df <- boot_1_df %>%
   mutate(grid_stuff = split_res$data) %>%
   select(-resamp, -prostate) %>%
-  unnest(.preserve = c(train, test)) %>%
-  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4)))
-# Check the above, some values feel weird
-         
+  unnest(.preserve = c(train, test))
+
+boot_1_df <- boot_1_df %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_1_df))) %>%
+  partition(cluster_group, cluster = cluster) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4))) %>%
+  collect()
+toc()
+# 36.91 seconds without parallel
+# 9.5 seconds with parallel
+
+
 # Now need to test the tuning values, use contour plot
 library(plotly)
 
@@ -240,28 +266,79 @@ library(plotly)
 boot_1_df %>%
   select(size, decay, pred_values) %>%
   unnest() %>%
+  filter(sMSE < 1.5) %>%
   plot_ly(x = ~size, y = ~decay, z = ~sMSE, type = 'contour')
 
 # MSPE, MSPR same thing
 boot_1_df %>%
   select(size, decay, pred_values) %>%
   unnest() %>%
-  plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'heatmap')
-# Plot obviously looks wrong, implies something is wrong with some of the initial values
+  filter(MSPR < 1.5) %>%
+  plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'contour')
+
 
 # B = 4
+tic()
 B_4 <- 4
 boot_4_df <- tibble(B = 1:B_4, prostate = prostate$data) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
          test = map2(prostate, resamp, ~ boot_test(.x, .y)))
 
+
+split_res <- grid %>% nest()
+
+boot_4_df <- boot_4_df %>%
+  mutate(grid_stuff = split_res$data) %>%
+  select(-resamp, -prostate) %>%
+  unnest(.preserve = c(train, test)) 
+
+boot_4_df <- boot_4_df %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_4_df))) %>%
+  partition(cluster_group, cluster = cluster) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4))) %>%
+  collect()
+toc()
+
+
+boot_4_df %>%
+  select(size, decay, pred_values) %>%
+  unnest() %>%
+  filter(MSPR < 1.5) %>%
+  plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'contour')
+
 # B = 20
+tic()
 B_20 <- 20
 boot_20_df <- tibble(B = 1:B_20, prostate = prostate$data) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
          test = map2(prostate, resamp, ~ boot_test(.x, .y)))
+
+
+split_res <- grid %>% nest()
+
+boot_20_df <- boot_20_df %>%
+  mutate(grid_stuff = split_res$data) %>%
+  select(-resamp, -prostate) %>%
+  unnest(.preserve = c(train, test)) 
+
+boot_20_df <- boot_20_df %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
+  partition(cluster_group, cluster = cluster) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4))) %>%
+  collect()
+toc()
+
+boot_20_df %>% 
+  select(size, decay, pred_values) %>%
+  unnest() %>%
+  filter(MSPR < 1.5) %>%
+  plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'contour')
+
+# The above has been run, dope
+# Definitely needs an expanded grid, view plots to determine changes necessary
+
 
 # (a) For B = 1 compute a (very rough) t-based confidence interval for the true prediction error of each parameter combination using the mean and standard deviation
 # of the squared errors. What does this tell you about your ability to select good
@@ -284,3 +361,128 @@ boot_20_df <- tibble(B = 1:B_20, prostate = prostate$data) %>%
 # (f) Report the MSPE from the test set for the chosen model only using each B, and
 # compare these three to past results. (Note that these MSPEs are also based on
 # very small n, so small differences are not very meaningful.)
+
+
+# 3. In the Abalone data, we will rerun the 20-splits problem using neural nets. The difficulty
+# here is that you need to be able to tune the NNs and select a “best” set of tuning
+# parameters before you assess the chosen model on a test set. That is, the test set from
+# each of the 20 splits can only be used once, on the final chosen NN model for that
+# split, and may not be used to help choose the model. You will therefore need to use
+# some approach to tuning that can be applied to the 75% of data that is in the training
+# set.
+
+# Try to automate this code to choose best parameter values
+set.seed(890987665)
+abalone <- read_csv("Abalone.csv")
+
+# Remove outliers in height
+abalone <- abalone %>%
+  filter(Height > 0 & Height < 0.5)
+
+# Need to build a function that handles all the splitting
+# Will need a number of folds and from that to create splits
+k <- 20 # N-Folds
+
+r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
+i <- 1
+
+abalone_splits <- abalone %>%
+  mutate(folds = r_vec,
+         male_dummy = Sex == 1,
+         female_dummy = Sex == 2) 
+
+abalone_train_split <- abalone_splits %>%
+  filter(folds != i) %>%
+  dplyr::select(-folds, -Sex) 
+
+abalone_test_split <- abalone_splits %>%
+  filter(folds == i) %>%
+  dplyr::select(-folds, -Sex) 
+
+# Need to design some grid to test parameters
+# Make sure to save results from each bootstrapped sample so that values can be compared
+
+
+boot_train_ab <- function(raw_data, resamp){
+  
+  prostate_train <- raw_data %>%
+    filter(row_number() %in% resamp) 
+  
+  prostate_test <- raw_data %>%
+    filter(!(row_number() %in% resamp))
+  
+  # Skip y, dont scale
+  prostate_train[, 1:7] <- rescale(prostate_train[, 1:7], prostate_train[, 1:7])
+  return(prostate_train)
+}
+
+boot_test_ab <- function(raw_data, resamp){
+  
+  prostate_train <- raw_data %>%
+    filter(row_number() %in% resamp)
+  
+  prostate_test <- raw_data %>%
+    filter(!(row_number() %in% resamp)) 
+  
+  # Skip y, dont scale
+  prostate_test[, 1:7] <- rescale(prostate_test[, 1:7], prostate_train[, 1:7]) 
+  return(prostate_test)
+}
+
+splitFun_ab <- function(train, test, size, decay){
+
+  MSE.final <- 9e99
+  for(i in 1:10){
+    nnet_obj <- nnet(Rings ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
+                     maxit = 500)
+    MSE <- nnet_obj$value/nrow(train)
+    if(MSE < MSE.final){ 
+      MSE.final <- MSE
+      nn.final <- nnet_obj
+    }
+  }
+  
+  
+  sMSE <- nn.final$value / nrow(train)
+  predictions <- predict(nn.final, test)
+  MSPR <- mean((test$Rings - predictions)^2)
+  
+  measures <- data.frame(sMSE = sMSE, MSPR = MSPR)
+  return(measures)
+}
+
+# Data heavy approach
+cluster %>%
+  cluster_library("tidyverse") %>%
+  cluster_library("nnet") %>%
+  cluster_assign_value("boot_train_ab", boot_train_ab) %>%
+  cluster_assign_value("boot_test_ab", boot_test_ab) %>%
+  cluster_assign_value("splitFun_ab", splitFun_ab)
+
+tic()
+B_20 <- 20
+grid <- expand.grid(size = c(1, 3, 5, 7, 10, 15, 20), decay = c(0, 0.001, 0.1, 1, 2, 5))
+abalone_train_nest <- abalone_train_split %>% nest()
+
+boot_20_df <- tibble(B = 1:B_20, abalone = abalone_train_nest$data) %>%
+  mutate(resamp = map(abalone, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
+         train = map2(abalone, resamp, ~ boot_train_ab(.x, .y)),
+         test = map2(abalone, resamp, ~ boot_test_ab(.x, .y)))
+
+
+split_res <- grid %>% nest()
+
+boot_20_df <- boot_20_df %>%
+  mutate(grid_stuff = split_res$data) %>%
+  select(-resamp, -abalone) %>%
+  unnest(.preserve = c(train, test)) 
+
+boot_20_df <- boot_20_df %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
+  partition(cluster_group, cluster = cluster) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun_ab(..1, ..2, ..3, ..4))) %>%
+  collect()
+toc()
+
+# TODO: Set up GCE stuff for this homework and get ready to crank some dope parallel stuff
+# This looks like it will work, I am content with the design
