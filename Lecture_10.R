@@ -195,17 +195,27 @@ boot_test <- function(raw_data, resamp){
   
   # Skip y, dont scale
   prostate_test[, 1:8] <- rescale(prostate_test[, 1:8], prostate_train[, 1:8]) 
-  return(prostate_scale)
+  return(prostate_test)
 }
 
 splitFun <- function(train, test, size, decay){
-  grid_start <- expand.grid(size = size, decay = decay) %>%
-    mutate(nnet_obj = pmap(list(train, size, decay) ~ nnet(lpsa ~ ., data = ..1,
-                                                           size = ..2, decay = ..3,
-                                                           linout = TRUE, trace = FALSE, maxit = 500))) %>%
-    mutate(sMSE = map2_dbl(train, nnet_obj, ~ .y$value/nrow(.x)),
-           preictions = ,
-           MSPR = ) # Complete these two statements 
+  # grid_start <- data.frame(train = train, test = test, size = size, decay = decay) %>%
+  #   mutate(nnet_obj = pmap(list(train, size, decay) ~ nnet(lpsa ~ ., data = ..1,
+  #                                                          size = ..2, decay = ..3,
+  #                                                          linout = TRUE, trace = FALSE, maxit = 500))) %>%
+  #   mutate(sMSE = map2_dbl(train, nnet_obj, ~ .y$value/nrow(.x)),
+  #          predictions = map2(test, nnet_obj, ~ predict(.y, .x)),
+  #          MSPR = map2_dbl(test, predictions, ~ mean((.x$lpsa - predictions)^2))) # Complete these two statements 
+  # 
+  nnet_obj <- nnet(lpsa ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
+                   maxit = 500)
+  
+  sMSE <- nnet_obj$value / nrow(train)
+  predictions <- predict(nnet_obj, test)
+  MSPR <- mean((test$lpsa - predictions)^2)
+  
+  measures <- data.frame(sMSE = sMSE, MSPR = MSPR)
+  return(measures)
 }
 
 # Data heavy approach
@@ -214,9 +224,44 @@ boot_1_df <- tibble(B = 1:B, prostate = prostate$data) %>%
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
          test = map2(prostate, resamp, ~ boot_test(.x, .y)))
 
+split_res <- grid %>% nest()
+
+boot_1_df <- boot_1_df %>%
+  mutate(grid_stuff = split_res$data) %>%
+  select(-resamp, -prostate) %>%
+  unnest(.preserve = c(train, test)) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4)))
+# Check the above, some values feel weird
+         
+# Now need to test the tuning values, use contour plot
+library(plotly)
+
+# With sMSE
+boot_1_df %>%
+  select(size, decay, pred_values) %>%
+  unnest() %>%
+  plot_ly(x = ~size, y = ~decay, z = ~sMSE, type = 'contour')
+
+# MSPE, MSPR same thing
+boot_1_df %>%
+  select(size, decay, pred_values) %>%
+  unnest() %>%
+  plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'heatmap')
+# Plot obviously looks wrong, implies something is wrong with some of the initial values
+
 # B = 4
+B_4 <- 4
+boot_4_df <- tibble(B = 1:B_4, prostate = prostate$data) %>%
+  mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
+         train = map2(prostate, resamp, ~ boot_train(.x, .y)),
+         test = map2(prostate, resamp, ~ boot_test(.x, .y)))
 
 # B = 20
+B_20 <- 20
+boot_20_df <- tibble(B = 1:B_20, prostate = prostate$data) %>%
+  mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
+         train = map2(prostate, resamp, ~ boot_train(.x, .y)),
+         test = map2(prostate, resamp, ~ boot_test(.x, .y)))
 
 # (a) For B = 1 compute a (very rough) t-based confidence interval for the true prediction error of each parameter combination using the mean and standard deviation
 # of the squared errors. What does this tell you about your ability to select good
