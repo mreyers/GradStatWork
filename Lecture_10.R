@@ -379,29 +379,6 @@ abalone <- read_csv("Abalone.csv")
 abalone <- abalone %>%
   filter(Height > 0 & Height < 0.5)
 
-# Need to build a function that handles all the splitting
-# Will need a number of folds and from that to create splits
-k <- 20 # N-Folds
-
-r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
-i <- 1
-
-abalone_splits <- abalone %>%
-  mutate(folds = r_vec,
-         male_dummy = Sex == 1,
-         female_dummy = Sex == 2) 
-
-abalone_train_split <- abalone_splits %>%
-  filter(folds != i) %>%
-  dplyr::select(-folds, -Sex) 
-
-abalone_test_split <- abalone_splits %>%
-  filter(folds == i) %>%
-  dplyr::select(-folds, -Sex) 
-
-# Need to design some grid to test parameters
-# Make sure to save results from each bootstrapped sample so that values can be compared
-
 
 boot_train_ab <- function(raw_data, resamp){
   
@@ -430,7 +407,7 @@ boot_test_ab <- function(raw_data, resamp){
 }
 
 splitFun_ab <- function(train, test, size, decay){
-
+  
   MSE.final <- 9e99
   for(i in 1:10){
     nnet_obj <- nnet(Rings ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
@@ -459,30 +436,68 @@ cluster %>%
   cluster_assign_value("boot_test_ab", boot_test_ab) %>%
   cluster_assign_value("splitFun_ab", splitFun_ab)
 
+
+# Need to build a function that handles all the splitting
+# Will need a number of folds and from that to create splits
+k <- 20 # N-Folds
+
+r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
+res <- tibble(test = 1:k, data = list(0))
+
 tic()
-B_20 <- 20
-grid <- expand.grid(size = c(1, 3, 5, 7, 10, 15, 20), decay = c(0, 0.001, 0.1, 1, 2, 5))
-abalone_train_nest <- abalone_train_split %>% nest()
-
-boot_20_df <- tibble(B = 1:B_20, abalone = abalone_train_nest$data) %>%
-  mutate(resamp = map(abalone, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
-         train = map2(abalone, resamp, ~ boot_train_ab(.x, .y)),
-         test = map2(abalone, resamp, ~ boot_test_ab(.x, .y)))
-
-
-split_res <- grid %>% nest()
-
-boot_20_df <- boot_20_df %>%
-  mutate(grid_stuff = split_res$data) %>%
-  select(-resamp, -abalone) %>%
-  unnest(.preserve = c(train, test)) 
-
-boot_20_df <- boot_20_df %>%
-  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
-  partition(cluster_group, cluster = cluster) %>%
-  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun_ab(..1, ..2, ..3, ..4))) %>%
-  collect()
+for(i in 1:k){
+  # Split the data
+  abalone_splits <- abalone %>%
+    mutate(folds = r_vec,
+           male_dummy = Sex == 1,
+           female_dummy = Sex == 2) 
+  
+  abalone_train_split <- abalone_splits %>%
+    filter(folds != i) %>%
+    dplyr::select(-folds, -Sex) 
+  
+  abalone_test_split <- abalone_splits %>%
+    filter(folds == i) %>%
+    dplyr::select(-folds, -Sex) 
+  
+  # Do 20 bootstraps using new function and specified grid
+  tic()
+  B_20 <- 20
+  grid <- expand.grid(size = c(1, 3, 5, 7, 10, 15, 20), decay = c(0, 0.001, 0.1, 1, 2, 5))
+  abalone_train_nest <- abalone_train_split %>% nest()
+  
+  boot_20_df <- tibble(B = 1:B_20, abalone = abalone_train_nest$data) %>%
+    mutate(resamp = map(abalone, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
+           train = map2(abalone, resamp, ~ boot_train_ab(.x, .y)),
+           test = map2(abalone, resamp, ~ boot_test_ab(.x, .y)))
+  
+  
+  split_res <- grid %>% nest()
+  
+  boot_20_df <- boot_20_df %>%
+    mutate(grid_stuff = split_res$data) %>%
+    select( -abalone) %>%
+    unnest(.preserve = c(train, test, resamp)) 
+  
+  boot_20_df <- boot_20_df %>%
+    mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
+    partition(cluster_group, cluster = cluster) %>%
+    mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun_ab(..1, ..2, ..3, ..4))) %>%
+    collect() %>%
+    select(-train, - test)
+  toc()
+  
+  res[i, 2] <- boot_20_df %>% ungroup() %>% nest()
+}
 toc()
+
+
+# Need to design some grid to test parameters
+# Make sure to save results from each bootstrapped sample so that values can be compared
+
+
+
+
 
 # TODO: Set up GCE stuff for this homework and get ready to crank some dope parallel stuff
 # This looks like it will work, I am content with the design
