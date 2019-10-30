@@ -76,7 +76,9 @@ grid_test <- grid_test %>%
   collect() %>%
   as_tibble()
 toc()
-object.size(grid_test)
+grid_test_good <- grid_test
+rm(grid_test)
+object.size(grid_test_good)
 
 # Is there a lighter way to do the above, without storing the same data in columns?
 prostate_train_data <- as.data.frame(rescale(prostate_train, prostate_train))
@@ -103,12 +105,16 @@ grid_light_version <- grid %>%
   collect() %>%
   as_tibble()
 toc()  
-object.size(grid_light_version)
+
+# Remove the partitioned data set so that R can gc() the cluster, fixes some runtime hopefully
+grid_light_version_good <- grid_light_version
+rm(grid_light_version)
+object.size(grid_light_version_good)
 # Less than half the size of the other at same run times
 # This will become much more important when the data dimension expands immensely
 
 # (a) Present a table of the in-sample MSEs and the test error MSPEs.
-grid_light_version %>%
+grid_light_version_good %>%
   ungroup()%>% 
   select(size, decay, sMSE, MSPE) %>%
   arrange(decay, size) # arrange in this fashion because I expand the original grid this way
@@ -116,7 +122,7 @@ grid_light_version %>%
 
 # (b) Comment on the relationship between sMSE vs. size and vs. decay. Explain why
 # this happens.
-grid_light_version %>%
+grid_light_version_good %>%
   ungroup()%>% 
   select(size, decay, sMSE, MSPE) %>%
   arrange(decay, size) %>% # arrange in this fashion because I expand the original grid this way
@@ -129,7 +135,7 @@ grid_light_version %>%
   xlab("Size") + theme_bw()
 # Spacing is at least consistent, figure out how to add in the appropriate labels
 
-grid_light_version %>%
+grid_light_version_good %>%
   ungroup()%>% 
   select(size, decay, sMSE, MSPE) %>%
   arrange(decay, size) %>% # arrange in this fashion because I expand the original grid this way
@@ -168,8 +174,23 @@ grid_light_version %>%
 
 # B = 1
 set.seed(120401002) 
+
+prostate <- read_csv("Prostate.csv")
+
 prostate <- prostate %>%
-  select(lcavol, lweight, age, lbph, svi, lcp, gleason, pgg45, lpsa) %>% nest()
+  select(lcavol, lweight, age, lbph, svi, lcp, gleason, pgg45, lpsa) %>%
+  mutate(set = ifelse(runif(n=nrow(prostate))>0.5, yes=2, no=1)) 
+
+prostate_train <- prostate %>%
+  filter(set == 1) %>%
+  select(-set) %>%
+  nest()
+
+prostate_test <- prostate %>%
+  filter(set == 2) %>%
+  select(-set) %>%
+  nest()
+
 B <- 1
 
 boot_train <- function(raw_data, resamp){
@@ -198,7 +219,8 @@ boot_test <- function(raw_data, resamp){
   return(prostate_test)
 }
 
-splitFun <- function(train, test, size, decay){
+# Fix this, returning too many values
+splitFun <- function(train, test, size, decay, true_test_x, true_test_y){
   # grid_start <- data.frame(train = train, test = test, size = size, decay = decay) %>%
   #   mutate(nnet_obj = pmap(list(train, size, decay) ~ nnet(lpsa ~ ., data = ..1,
   #                                                          size = ..2, decay = ..3,
@@ -208,22 +230,26 @@ splitFun <- function(train, test, size, decay){
   #          MSPR = map2_dbl(test, predictions, ~ mean((.x$lpsa - predictions)^2))) # Complete these two statements 
   # 
   MSE.final <- 9e99
+  se_all <- 0
   for(i in 1:100){
     nnet_obj <- nnet(lpsa ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
                      maxit = 500)
     MSE <- nnet_obj$value/nrow(train)
+    
     if(MSE < MSE.final){ 
       MSE.final <- MSE
       nn.final <- nnet_obj
+      
     }
   }
   
   
   sMSE <- nn.final$value / nrow(train)
-  predictions <- predict(nn.final, test)
-  MSPR <- mean((test$lpsa - predictions)^2)
-  
-  measures <- data.frame(sMSE = sMSE, MSPR = MSPR)
+  predictions <- predict(nn.final, true_test_x)
+  MSPE_train <- mean((test$lpsa - predict(nn.final, test))^2)
+  MSPR <- mean((true_test_y - predictions)^2)
+  se_all <- sd((true_test_y - predictions)^2)
+  measures <- tibble(sMSE = sMSE, MSPE_train = MSPE_train, MSPR = MSPR, se_all = se_all)
   return(measures)
 }
 
@@ -237,23 +263,30 @@ cluster %>%
 
 
 tic()
-boot_1_df <- tibble(B = 1:B, prostate = prostate$data) %>%
+boot_1_df <- tibble(B = 1:B, prostate = prostate_train$data, prostate_true_test = prostate_test$data) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
-         test = map2(prostate, resamp, ~ boot_test(.x, .y)))
+         test = map2(prostate, resamp, ~ boot_test(.x, .y)),
+         true_test_x = map2(prostate_true_test, train, ~rescale(.x[,1:8], .y[,1:8])),
+         true_test_y = map(prostate_true_test, ~.$lpsa))
 
 split_res <- grid %>% nest()
 
 boot_1_df <- boot_1_df %>%
   mutate(grid_stuff = split_res$data) %>%
-  select(-resamp, -prostate) %>%
-  unnest(.preserve = c(train, test))
+  select(-resamp, -prostate, -prostate_true_test) %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y))
 
 boot_1_df <- boot_1_df %>%
   mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_1_df))) %>%
   partition(cluster_group, cluster = cluster) %>%
-  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4))) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay, true_test_x, true_test_y),
+                            ~ splitFun(..1, ..2, ..3, ..4, ..5, ..6))) %>%
   collect()
+
+boot_1_df_good <- boot_1_df
+rm(boot_1_df)
+boot_1_df <- boot_1_df_good
 toc()
 # 36.91 seconds without parallel
 # 9.5 seconds with parallel
@@ -280,24 +313,33 @@ boot_1_df %>%
 # B = 4
 tic()
 B_4 <- 4
-boot_4_df <- tibble(B = 1:B_4, prostate = prostate$data) %>%
+boot_4_df <- tibble(B = list(1:B_4), prostate = prostate_train$data, prostate_true_test = prostate_test$data) %>%
+  unnest(.preserve = c(prostate, prostate_true_test)) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
-         test = map2(prostate, resamp, ~ boot_test(.x, .y)))
+         test = map2(prostate, resamp, ~ boot_test(.x, .y)),
+         true_test_x = map2(prostate_true_test, train, ~rescale(.x[,1:8], .y[,1:8])),
+         true_test_y = map(prostate_true_test, ~.$lpsa))
 
 
 split_res <- grid %>% nest()
 
 boot_4_df <- boot_4_df %>%
   mutate(grid_stuff = split_res$data) %>%
-  select(-resamp, -prostate) %>%
-  unnest(.preserve = c(train, test)) 
+  select(-resamp, -prostate, -prostate_true_test) %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) 
 
 boot_4_df <- boot_4_df %>%
   mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_4_df))) %>%
   partition(cluster_group, cluster = cluster) %>%
-  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4))) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay, true_test_x, true_test_y),
+                            ~ splitFun(..1, ..2, ..3, ..4, ..5, ..6))) %>%
   collect()
+
+# It seems that I just need to delete the original partitioned object to free the cluster
+boot_4_df_good <- boot_4_df
+rm(boot_4_df)
+boot_4_df <- boot_4_df_good
 toc()
 
 
@@ -310,32 +352,40 @@ boot_4_df %>%
 # B = 20
 tic()
 B_20 <- 20
-boot_20_df <- tibble(B = 1:B_20, prostate = prostate$data) %>%
+boot_20_df <- tibble(B = list(1:B_20), prostate = prostate_train$data,
+                     prostate_true_test = prostate_test$data) %>%
+  unnest(.preserve = c(prostate, prostate_true_test)) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
-         test = map2(prostate, resamp, ~ boot_test(.x, .y)))
+         test = map2(prostate, resamp, ~ boot_test(.x, .y)),
+         true_test_x = map2(prostate_true_test, train, ~rescale(.x[,1:8], .y[,1:8])),
+         true_test_y = map(prostate_true_test, ~.$lpsa))
 
 
 split_res <- grid %>% nest()
 
 boot_20_df <- boot_20_df %>%
   mutate(grid_stuff = split_res$data) %>%
-  select(-resamp, -prostate) %>%
-  unnest(.preserve = c(train, test)) 
+  select(-resamp, -prostate, -prostate_true_test) %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) 
 
 boot_20_df <- boot_20_df %>%
   mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
   partition(cluster_group, cluster = cluster) %>%
-  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun(..1, ..2, ..3, ..4))) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay, true_test_x, true_test_y),
+                            ~ splitFun(..1, ..2, ..3, ..4, ..5, ..6))) %>%
   collect()
 toc()
 
-boot_20_df %>% 
-  select(size, decay, pred_values) %>%
-  unnest() %>%
-  filter(MSPR < 1.5) %>%
-  plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'contour')
+# boot_20_df %>% 
+#   select(size, decay, pred_values) %>%
+#   unnest() %>%
+#   filter(MSPR < 1.5) %>%
+#   plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'contour')
 
+boot_20_df_good <- boot_20_df
+rm(boot_20_df)
+boot_20_df <- boot_20_df_good
 # The above has been run, dope
 # Definitely needs an expanded grid, view plots to determine changes necessary
 
@@ -343,20 +393,212 @@ boot_20_df %>%
 # (a) For B = 1 compute a (very rough) t-based confidence interval for the true prediction error of each parameter combination using the mean and standard deviation
 # of the squared errors. What does this tell you about your ability to select good
 # tuning parameters for this data set using this method?
+boot_1_df_int <- boot_1_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  mutate(se = se_all) %>%
+  select(-se_all) %>%
+  mutate(lower_bound = MSPR - qt(0.975, 100 - 1) * se,
+         upper_bound = MSPR + qt(0.975, 100 - 1) * se) %>%
+  unite(combo, size, decay)
+  
+boot_1_df_int %>%
+  ggplot(aes(x = combo, y = MSPR)) +
+  geom_point() + geom_errorbar(aes(ymin = lower_bound, ymax = upper_bound)) +
+  ggtitle("Interval Comparison for MSPR by Decay and Size Combination") +
+  xlab("Size_Decay") +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = rel(0.75), angle = 70, hjust = 1))
+
+# Due to the degree of overlap between the combinations it seems likely that we will not always get the 
+# truly best method due to randomness. More fits will likely help reduce this but we will always be uncertain.
 
 # (b) For each B make boxplots relative to best in each rep (this is just one point per
 # combination for B = 1). Use these to identify the best combination(s). 
+minimum_mspe_train <- boot_1_df_int %>%
+  ungroup() %>%
+  arrange(MSPE_train) %>%
+  slice(1) %>%
+  pull(MSPE_train)
+
+boot_1_df_int %>%
+  mutate(MSPE_train = sqrt(MSPE_train / minimum_mspe_train)) %>%
+  ggplot(aes(x = combo, y = MSPE_train)) +
+  geom_point() +
+  ggtitle("Relative MSPR by Decay and Size Combination") +
+  xlab("Size_Decay") +
+  scale_y_continuous(limits = c(1, 2)) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = rel(0.75), angle = 70, hjust = 1))
+
+# The best combination here looks like it could be any size with 1 decay or size 1 with decay 0.1
+
+minimum_mspe_train <- boot_4_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  mutate(se = se_all) %>%
+  select(-se_all) %>%
+  arrange(B) %>%
+  group_by(B) %>%
+  arrange(MSPE_train) %>%
+  slice(1) %>%
+  select(min_mspr = MSPE_train)
+  
+boot_4_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  left_join(minimum_mspe_train) %>%
+  unite(combo, size, decay) %>%
+  mutate(se = se_all,
+         MSPE_train = sqrt(MSPE_train / min_mspr)) %>%
+  ggplot(aes(x = combo, y = MSPE_train)) +
+  geom_boxplot() +
+  ggtitle("Relative MSPR by Decay and Size Combination") +
+  xlab("Size_Decay") +
+  scale_y_continuous(limits = c(1, 2)) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(size = rel(0.75), angle = 70, hjust = 1))
+
+# Again this could be any size with decay 1 or size 1 with decay 0.1. The possibility also exists for 
+# size any size with decay 0.1.
+
+minimum_mspe_train <- boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  mutate(se = se_all) %>%
+  select(-se_all) %>%
+  arrange(B) %>%
+  group_by(B) %>%
+  arrange(MSPE_train) %>%
+  slice(1) %>%
+  select(min_mspr = MSPE_train)
+
+boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  left_join(minimum_mspe_train) %>%
+  unite(combo, size, decay) %>%
+  mutate(se = se_all,
+         MSPE_train = MSPE_train / min_mspr) %>%
+  ggplot(aes(x = combo, y = MSPE_train)) +
+  geom_boxplot() +
+  ggtitle("Relative MSPR by Decay and Size Combination") +
+  xlab("Size_Decay") +
+  scale_y_continuous(limits = c(1,2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = rel(0.75), angle = 70, hjust = 1))
+
+# With 20 bootstraps it is starting to become more clear that any size and decay 1 should be reasonable. 
+# By increasing the number of bootstraps we get a better measure of variability in the fits and a clearer
+# picture. 
+
 
 # (c) For the B = 20 case, compute mean MSPEs for each combination and make
 # boxplots of these means against each parameter separately. What do these plots
 # suggest might be good tuning parameters?
 
+boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  left_join(minimum_mspe_train) %>%
+  mutate(se = se_all,
+         MSPE_train = MSPE_train / min_mspr) %>%
+  ggplot(aes(x = as.factor(size), y = MSPE_train)) +
+  geom_boxplot() +
+  ggtitle("Relative MSPR by Decay and Size Combination") +
+  xlab("Size") +
+  scale_y_continuous(limits = c(1,2)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = rel(0.75), angle = 70, hjust = 1))
+  
+boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  left_join(minimum_mspe_train) %>%
+  mutate(se = se_all,
+         MSPE_train = MSPE_train / min_mspr) %>%
+  ggplot(aes(x = as.factor(decay), y = MSPE_train)) +
+  geom_boxplot() +
+  ggtitle("MSPR by Decay and Size Combination") +
+  xlab("Decay") +
+  scale_y_continuous(limits = c(1, 3)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = rel(0.75), angle = 70, hjust = 1))
+
 #   (d) For the B = 20 case, make a contour plot of the means against the two parameters.
 # Scale out any extreme values if necessary so that you can focus on meaningful
 # results. Where do good values appear to lie?
 
+boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  left_join(minimum_mspe_train) %>%
+  mutate(se = se_all,
+         MSPE_train = MSPE_train / min_mspr) %>%
+  group_by(size, decay) %>%
+  summarize(MSPE_train = mean(MSPE_train)) %>%
+  filter(MSPE_train < 2) %>%
+  plot_ly(x = ~decay, y = ~size, z = ~MSPE_train, type = 'contour')
+
+# Most of the good values lie on decay 1 with varying sizes. There may be reason to suggest using a size
+# larger than 10 with decay 1 to get better results. Further, the minimum value actually occurs at
+# a size of 1 and a decay of 0.001. In e) I will make my grid finer over the spaces of interest to 
+# investigate these possibilities.
+
+
 #   (e) Choose a best model and provide plots and/or numerical evidence to support your
 # decision.
+grid <- expand.grid(decay = c(0.001, 0.01, 0.25, 0.5, 0.75, 1, 1.25), 
+                    size = c(1, 3, 5, 7, 10, 13, 17, 20))
+
+tic()
+B_20 <- 20
+boot_20_df <- tibble(B = list(1:B_20), prostate = prostate_train$data,
+                     prostate_true_test = prostate_test$data) %>%
+  unnest(.preserve = c(prostate, prostate_true_test)) %>%
+  mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
+         train = map2(prostate, resamp, ~ boot_train(.x, .y)),
+         test = map2(prostate, resamp, ~ boot_test(.x, .y)),
+         true_test_x = map2(prostate_true_test, train, ~rescale(.x[,1:8], .y[,1:8])),
+         true_test_y = map(prostate_true_test, ~.$lpsa))
+
+
+split_res <- grid %>% nest()
+
+boot_20_df <- boot_20_df %>%
+  mutate(grid_stuff = split_res$data) %>%
+  select(-resamp, -prostate, -prostate_true_test) %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) 
+
+boot_20_df <- boot_20_df %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
+  partition(cluster_group, cluster = cluster) %>%
+  mutate(pred_values = pmap(list(train, test, size, decay, true_test_x, true_test_y),
+                            ~ splitFun(..1, ..2, ..3, ..4, ..5, ..6))) %>%
+  collect()
+toc()
+
+minimum_mspe_train <- boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  select(-se_all) %>%
+  arrange(B) %>%
+  group_by(B) %>%
+  arrange(MSPE_train) %>%
+  slice(1) %>%
+  select(min_mspr = MSPE_train)
+
+boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  left_join(minimum_mspe_train) %>%
+  mutate(MSPE_train = MSPE_train / min_mspr) %>%
+  group_by(size, decay) %>%
+  summarize(MSPE_train = mean(MSPE_train)) %>%
+  filter(MSPE_train < 2) %>%
+  plot_ly(x = ~decay, y = ~size, z = ~MSPE_train, type = 'contour')
+
+# Decay of 0.5, any size 3 or greater. This grid seems conclusive.
 
 # (f) Report the MSPE from the test set for the chosen model only using each B, and
 # compare these three to past results. (Note that these MSPEs are also based on
@@ -378,29 +620,6 @@ abalone <- read_csv("Abalone.csv")
 # Remove outliers in height
 abalone <- abalone %>%
   filter(Height > 0 & Height < 0.5)
-
-# Need to build a function that handles all the splitting
-# Will need a number of folds and from that to create splits
-k <- 20 # N-Folds
-
-r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
-i <- 1
-
-abalone_splits <- abalone %>%
-  mutate(folds = r_vec,
-         male_dummy = Sex == 1,
-         female_dummy = Sex == 2) 
-
-abalone_train_split <- abalone_splits %>%
-  filter(folds != i) %>%
-  dplyr::select(-folds, -Sex) 
-
-abalone_test_split <- abalone_splits %>%
-  filter(folds == i) %>%
-  dplyr::select(-folds, -Sex) 
-
-# Need to design some grid to test parameters
-# Make sure to save results from each bootstrapped sample so that values can be compared
 
 
 boot_train_ab <- function(raw_data, resamp){
@@ -430,7 +649,7 @@ boot_test_ab <- function(raw_data, resamp){
 }
 
 splitFun_ab <- function(train, test, size, decay){
-
+  
   MSE.final <- 9e99
   for(i in 1:10){
     nnet_obj <- nnet(Rings ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
@@ -450,6 +669,7 @@ splitFun_ab <- function(train, test, size, decay){
   measures <- data.frame(sMSE = sMSE, MSPR = MSPR)
   return(measures)
 }
+# Edit this to return a neural net object
 
 # Data heavy approach
 cluster %>%
@@ -459,30 +679,63 @@ cluster %>%
   cluster_assign_value("boot_test_ab", boot_test_ab) %>%
   cluster_assign_value("splitFun_ab", splitFun_ab)
 
+
+# Need to build a function that handles all the splitting
+# Will need a number of folds and from that to create splits
+k <- 20 # N-Folds
+
+r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
+res <- tibble(test = 1:k, data = list(0))
 tic()
-B_20 <- 20
-grid <- expand.grid(size = c(1, 3, 5, 7, 10, 15, 20), decay = c(0, 0.001, 0.1, 1, 2, 5))
-abalone_train_nest <- abalone_train_split %>% nest()
-
-boot_20_df <- tibble(B = 1:B_20, abalone = abalone_train_nest$data) %>%
-  mutate(resamp = map(abalone, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
-         train = map2(abalone, resamp, ~ boot_train_ab(.x, .y)),
-         test = map2(abalone, resamp, ~ boot_test_ab(.x, .y)))
-
-
-split_res <- grid %>% nest()
-
-boot_20_df <- boot_20_df %>%
-  mutate(grid_stuff = split_res$data) %>%
-  select(-resamp, -abalone) %>%
-  unnest(.preserve = c(train, test)) 
-
-boot_20_df <- boot_20_df %>%
-  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
-  partition(cluster_group, cluster = cluster) %>%
-  mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun_ab(..1, ..2, ..3, ..4))) %>%
-  collect()
+for(i in 1:k){
+  # Split the data
+  abalone_splits <- abalone %>%
+    mutate(folds = r_vec,
+           male_dummy = Sex == 1,
+           female_dummy = Sex == 2) 
+  
+  abalone_train_split <- abalone_splits %>%
+    filter(folds != i) %>%
+    dplyr::select(-folds, -Sex) 
+  
+  abalone_test_split <- abalone_splits %>%
+    filter(folds == i) %>%
+    dplyr::select(-folds, -Sex) 
+  
+  # Apply and time my functions, seems to run faster on laptop
+  tic()
+  B_20 <- 20
+  grid <- expand.grid(size = c(1, 3, 5, 7, 10, 15, 20), decay = c(0, 0.001, 0.1, 1, 2, 5))
+  abalone_train_nest <- abalone_train_split %>% nest()
+  
+  boot_20_df <- tibble(B = 1:B_20, abalone = abalone_train_nest$data) %>%
+    mutate(resamp = map(abalone, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
+           train = map2(abalone, resamp, ~ boot_train_ab(.x, .y)),
+           test = map2(abalone, resamp, ~ boot_test_ab(.x, .y)))
+  
+  
+  split_res <- grid %>% nest()
+  
+  boot_20_df <- boot_20_df %>%
+    mutate(grid_stuff = split_res$data) %>%
+    select(-resamp, -abalone) %>%
+    unnest(.preserve = c(train, test)) 
+  
+  boot_20_df <- boot_20_df %>%
+    mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
+    partition(cluster_group, cluster = cluster) %>%
+    mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun_ab(..1, ..2, ..3, ..4))) %>%
+    collect() %>%
+    select(-train, -test)
+  toc()
+  
+  res[i, 2] <- boot_20_df %>% ungroup() %>% nest()
+}
 toc()
+# Need to design some grid to test parameters
+# Make sure to save results from each bootstrapped sample so that values can be compared
+
+
 
 # TODO: Set up GCE stuff for this homework and get ready to crank some dope parallel stuff
 # This looks like it will work, I am content with the design
