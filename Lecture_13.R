@@ -157,6 +157,13 @@ toc()
 
 # Perhaps EZtune will be useful
 library(EZtune)
+ez_gbm = eztune(x=prostate_train[,-9], y=prostate_train$lpsa, method="gbm", optimizer="hjn", fast=FALSE)
+
+ez_gbm
+# gbm(data=AQ, Ozone~Wind+Temp, distribution="gaussian", 
+#     n.trees=EZ.gbm$n.trees, interaction.depth=EZ.gbm$interaction.depth, 
+#     shrinkage=EZ.gbm$shrinkage, n.minobsinnode=EZ.gbm$n.minobsinnode)
+
 # eztune(x, y, method, optimizer, fast)
 params <- expand.grid(interaction_depth = list(c(1, 2, 4)),
                       shrinkage = c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5), 
@@ -454,7 +461,8 @@ abalone <- abalone %>%
   filter(Height > 0 & Height < 0.5) %>%
   mutate(Sex = as.factor(Sex))
 
-r_vec <- sample(1:k, dim(abalone)[1], replace=TRUE)
+num_folds <- 20
+r_vec <- sample(1:num_folds, dim(abalone)[1], replace=TRUE)
 
 params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
                          eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75), 
@@ -467,14 +475,17 @@ params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
          predict = 0)
 
 
-params_new <- expand.grid(interaction_depth = list(c(1:8)),
-                          shrinkage = c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75), 
-                          bag_fraction = list(c(0.7, 0.75, 0.8, 0.85, 0.9))) %>%
-  unnest(.preserve = interaction_depth) %>% 
-  unnest() %>%
-  mutate(tree_count = 0,
-         oob = 0,
-         predict = 0)
+# params_new <- expand.grid(interaction_depth = list(c(1:8)),
+#                           shrinkage = c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75), 
+#                           bag_fraction = list(c(0.7, 0.75, 0.8, 0.85, 0.9))) %>%
+#   unnest(.preserve = interaction_depth) %>% 
+#   unnest() %>%
+#   mutate(tree_count = 0,
+#          oob = 0,
+#          predict = 0)
+
+# Set up stuff for easy tune saving
+res_gbm_noloop <- tibble()
 
 n_cores <- parallel::detectCores()
 # This will take roughly 8 times longer than the first set
@@ -489,31 +500,56 @@ res_gbm <- tibble(iter = 1:20, data = list(0))
 #Need to do some thinking about how to implement this appropriately
 # Storage is the key
 tic()
-for(i in 1:1){
+for(i in 1:num_folds){
   
   abalone_train_split <- abalone %>%
-    filter(folds != i) %>%
+    dplyr::filter(folds != i) %>%
     dplyr::select(-folds)
   
   abalone_test_split <- abalone %>%
     filter(folds == i) %>%
     dplyr::select(-folds)
   
-  for(j in 1:nrow(params_new)){
-    # gbm
-    temp_model <- gbm(data= abalone_train_split, Rings ~ ., distribution="gaussian", 
-                      n.trees=10000, interaction.depth=params_new$interaction_depth[j],
-                      shrinkage=params_new$shrinkage[j], 
-                      bag.fraction=params_new$bag_fraction[j],
-                      cv.folds=5, n.cores = n_cores)
-    
-    params_new$tree_count[j] <- which.min(temp_model$cv.error)
-    params_new$oob[j] <- sqrt(min(temp_model$cv.error))
-    params_new$predict[j] <- sqrt(mean((abalone_test_split$Rings - predict(temp_model, abalone_test_split))^2))
-  }
+  # gbm
+  ez_gbm <- eztune(x=abalone_train_split[,-9],
+                   y=abalone_train_split$Rings, method="gbm", optimizer="hjn", fast=0.75)
+  
+  ez_gbm_fit <- gbm(data=abalone_train_split, Rings ~., distribution="gaussian", 
+                    n.trees=ez_gbm$n.trees, interaction.depth=ez_gbm$interaction.depth, 
+                    shrinkage=ez_gbm$shrinkage, n.minobsinnode=ez_gbm$n.minobsinnode,
+                    cv.folds=5, bag.fraction = 0.5) # Can use smaller because already tuned
+  
+  results_iter <- tibble(fold = i,
+                         tree_count = which.min(ez_gbm_fit$cv.error),
+                         oob = sqrt(min(ez_gbm_fit$cv.error)),
+                         rmspe = sqrt(mean((abalone_test_split$Rings - predict(temp_model, abalone_test_split))^2)))
+  
+  res_gbm_noloop <- res_gbm_noloop %>%
+    bind_rows(results_iter)
+  
+  # for(j in 1:nrow(params_new)){
+  #   # gbm
+  #   temp_model <- gbm(data= abalone_train_split, Rings ~ ., distribution="gaussian", 
+  #                     n.trees=10000, interaction.depth=params_new$interaction_depth[j],
+  #                     shrinkage=params_new$shrinkage[j], 
+  #                     bag.fraction=params_new$bag_fraction[j],
+  #                     cv.folds=5, n.cores = n_cores)
+  #   
+  #   params_new$tree_count[j] <- which.min(temp_model$cv.error)
+  #   params_new$oob[j] <- sqrt(min(temp_model$cv.error))
+  #   params_new$predict[j] <- sqrt(mean((abalone_test_split$Rings - predict(temp_model, abalone_test_split))^2))
+  # }
   
   # Save the tibble to the data frame for gbm
-  res_gbm$data[i] <- params_new %>% nest()
+  #res_gbm$data[i] <- params_new %>% nest()
+  print("Done the gbm step")
+  
+  # Need to convert Sex to numeric because it is making my matrix character data
+  abalone_train_split <- abalone_train_split %>%
+    mutate(Sex = as.numeric(Sex))
+  
+  abalone_test_split <- abalone_test_split %>%
+    mutate(Sex = as.numeric(Sex))
   
   for(k in 1:nrow(params_xg)){
     # xgb stuff
@@ -524,16 +560,31 @@ for(i in 1:1){
                          nrounds=params_xg$subsample[k],
                          objective="reg:linear", nfold=5, verbose = 0)
     
+    act_model <- xgboost(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
+                     max_depth=params_xg$max_depth[k],
+                     eta=params_xg$eta[k],
+                     subsample=params_xg$subsample[k],
+                     nrounds=params_xg$subsample[k],
+                     objective="reg:linear", verbose = 0)
+    
     eval_log <- temp_model$evaluation_log
     min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
     
     params_xg$rmse[k] <- min_res_cv$test_rmse_mean
+    
+    # Need to add in an actual model, the xgb.cv object is not appropriate for predict()
     params_xg$predict[k] <- sqrt(mean(
-      (abalone_test_split$Rings - predict(temp_model, as.matrix(abalone_test_split[,-9])))^2))
+      (abalone_test_split$Rings - predict(act_model, as.matrix(abalone_test_split[,-9])))^2))
   }
   
   # Save the data frame to the tibble for xgb
-  res_xgb$data[i] <- params_xg %>% nest()
+  res_xgb$data[i] <- list(params_xg)
   print(i)
 }
+
+# Write the two data frames to csv
+# gbm
+res_gbm_noloop %>% write.csv('gbm_results.csv')
+# xgb
+res_xgb %>% unnest() %>% write.csv('xgb_results.csv')
 toc()
