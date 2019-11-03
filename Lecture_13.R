@@ -522,7 +522,8 @@ for(i in 1:num_folds){
   results_iter <- tibble(fold = i,
                          tree_count = which.min(ez_gbm_fit$cv.error),
                          oob = sqrt(min(ez_gbm_fit$cv.error)),
-                         rmspe = sqrt(mean((abalone_test_split$Rings - predict(temp_model, abalone_test_split))^2)))
+                         rmspe = sqrt(mean(
+                           (abalone_test_split$Rings - predict(ez_gbm_fit, abalone_test_split))^2)))
   
   res_gbm_noloop <- res_gbm_noloop %>%
     bind_rows(results_iter)
