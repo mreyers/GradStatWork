@@ -585,7 +585,9 @@ for(i in 1:num_folds){
 
 # Write the two data frames to csv
 # gbm
-res_gbm_noloop %>% write.csv('gbm_results.csv')
+#res_gbm_noloop %>% write.csv('gbm_results.csv')
+# backup_gbm <- res_gbm_noloop
 # xgb
-res_xgb %>% unnest() %>% write.csv('xgb_results.csv')
+#res_xgb %>% unnest() %>% write.csv('xgb_results.csv')
+# backup_xgb <- res_xgb
 toc()
