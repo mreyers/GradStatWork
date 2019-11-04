@@ -582,7 +582,7 @@ for(i in 1:num_folds){
   res_xgb$data[i] <- list(params_xg)
   print(i)
 }
-
+toc()
 # Write the two data frames to csv
 # gbm
 #res_gbm_noloop %>% write.csv('gbm_results.csv')
@@ -590,4 +590,44 @@ for(i in 1:num_folds){
 # xgb
 #res_xgb %>% unnest() %>% write.csv('xgb_results.csv')
 # backup_xgb <- res_xgb
-toc()
+
+# Forgot to do the default settings for each split
+res_default <- tibble(fold = 1:num_folds, rmspe_gbm = 0, rmspe_xgb = 0)
+for(i in 1:num_folds){
+  
+  # gbm first
+  abalone_train_split <- abalone %>%
+    dplyr::filter(folds != i) %>%
+    dplyr::select(-folds)
+  
+  abalone_test_split <- abalone %>%
+    filter(folds == i) %>%
+    dplyr::select(-folds)
+  
+  # Default is 100 trees, not being detected though
+  gbm_fit <- gbm(data=abalone_train_split, Rings ~., distribution="gaussian", n.trees = 100)
+  
+  # Default param has no cv.folds so there is no oob calculation
+  # res_default$oob_gbm[i] <- sqrt(min(gbm_fit$cv.error))
+  
+  # Not sure why I needed to manually add here, the gbm_fit object has an n.trees element
+  res_default$rmspe_gbm[i] <- sqrt(mean(
+    (abalone_test_split$Rings - predict(gbm_fit, abalone_test_split, n.trees = 100))^2))
+  
+  # xgb second
+  # Need to convert Sex to numeric because it is making my matrix character data
+  abalone_train_split <- abalone_train_split %>%
+    mutate(Sex = as.numeric(Sex))
+  
+  abalone_test_split <- abalone_test_split %>%
+    mutate(Sex = as.numeric(Sex))
+  
+  xgb_fit <- xgboost(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
+          nrounds = 20, objective="reg:linear", verbose = 0)
+  
+  # Fit criteria to report
+  res_default$rmspe_xgb[i] <- sqrt(mean(
+    (abalone_test_split$Rings - predict(xgb_fit, as.matrix(abalone_test_split[,-9])))^2))
+}
+
+# Now start the proper write up, at least in preparation
