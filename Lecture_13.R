@@ -457,10 +457,10 @@ cluster %>%
 set_default_cluster(cluster)
 
 tic()
-params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
+params_xg <- expand.grid(max_depth = c(3, 6, 12, 20, 30),
                       eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9),
-                      subsample = list(c(0.5, 0.6, 0.75, 0.9, 1)),
-                      nrounds = list(c(20, 200, 500, 1000, 2000, 4000, 8000))) %>%
+                      subsample = c(0.5, 0.6, 0.75, 0.9, 1),
+                      nrounds = c(20, 200, 500, 1000, 2000, 4000, 8000)) %>%
   mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(.))) %>%
   partition(cluster_group, cluster = cluster) %>%
   mutate(rmse_values = pmap_dbl(list(max_depth, eta, subsample, nrounds),
@@ -510,13 +510,12 @@ abalone <- abalone %>%
 num_folds <- 20
 r_vec <- sample(1:num_folds, dim(abalone)[1], replace=TRUE)
 
-params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
+# # # # # # # # # # # # # #
+# Fix this for parallel, using similar function as earlier but with abalone data
+params_xg <- expand.grid(max_depth = c(3, 6, 12, 20, 30),
                          eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75), 
-                         subsample = list(c(0.5, 0.6, 0.75, 0.9, 1)),
-                         nrounds = list(c(20, 200, 500, 1000))) %>%
-  unnest(.preserve = c(max_depth, subsample)) %>% 
-  unnest(.preserve = subsample) %>% 
-  unnest() %>%
+                         subsample = c(0.5, 0.6, 0.75, 0.9, 1),
+                         nrounds = c(20, 200, 500, 1000)) %>%
   mutate(rmse = 0,
          predict = 0)
 
@@ -604,14 +603,14 @@ for(i in 1:num_folds){
                          max_depth=params_xg$max_depth[k],
                          eta=params_xg$eta[k],
                          subsample=params_xg$subsample[k],
-                         nrounds=params_xg$subsample[k],
+                         nrounds=params_xg$nrounds[k],
                          objective="reg:linear", nfold=5, verbose = 0)
     
     act_model <- xgboost(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
                      max_depth=params_xg$max_depth[k],
                      eta=params_xg$eta[k],
                      subsample=params_xg$subsample[k],
-                     nrounds=params_xg$subsample[k],
+                     nrounds=params_xg$nrounds[k],
                      objective="reg:linear", verbose = 0)
     
     eval_log <- temp_model$evaluation_log
