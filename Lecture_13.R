@@ -422,41 +422,79 @@ cv_results_d12 <- xg_d12$evaluation_log
 
 
 # Parameters to check: max_depth, eta, subsample, and nrounds
-tic()
-params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
-                      eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75), 
-                      subsample = list(c(0.5, 0.6, 0.75, 0.9, 1)),
-                      nrounds = list(c(20, 200, 500, 1000))) %>%
-  unnest(.preserve = c(max_depth, subsample)) %>% 
-  unnest(.preserve = subsample) %>% 
-  unnest() %>%
-  mutate(rmse = 0)
 
 # Train numerous models, gather testing criteria
 # Implement the lazy way
+# Nevermind, need to do the smart way cause this is heavy
 
-for(i in 1:nrow(params_xg)){
-  
-  # xgb
-  temp_model <- xgb.cv(data=as.matrix(prostate_train[,-9]), label=prostate_train$lpsa, 
-                       max_depth=params_xg$max_depth[i],
-                       eta=params_xg$eta[i],
-                       subsample=params_xg$subsample[i],
-                       nrounds=params_xg$subsample[i],
+xgb_fit_function <- function(data, depth, eta, subsample, nrounds){
+  temp_model <- xgb.cv(data=as.matrix(data[,-9]), label=data$lpsa, 
+                       max_depth= depth,
+                       eta= eta,
+                       subsample= subsample,
+                       nrounds= nrounds,
                        objective="reg:linear", nfold=5, verbose = 0)
   
   eval_log <- temp_model$evaluation_log
   min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
   
-  params_xg$rmse[i] <- min_res_cv$test_rmse_mean
+  return(min_res_cv$test_rmse_mean)
 }
+
+library(multidplyr)
+num_cores <- parallel::detectCores()
+cluster <- create_cluster(num_cores)
+
+# Copy over the libraries, functions and data needed
+cluster %>%
+  cluster_library("tidyverse") %>%
+  cluster_library("xgboost") %>%
+  cluster_assign_value("xgb_fit_function", xgb_fit_function) %>%
+  cluster_assign_value("prostate_train", prostate_train) %>%
+  cluster_assign_value("prostate_test", prostate_test)
+
+# use this cluster for all parallel stuff
+set_default_cluster(cluster)
+
+tic()
+params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
+                      eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9),
+                      subsample = list(c(0.5, 0.6, 0.75, 0.9, 1)),
+                      nrounds = list(c(20, 200, 500, 1000, 2000, 4000, 8000))) %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(.))) %>%
+  partition(cluster_group, cluster = cluster) %>%
+  mutate(rmse_values = pmap_dbl(list(max_depth, eta, subsample, nrounds),
+                                ~ xgb_fit_function(prostate_train, ..1, ..2, ..3, ..4))) %>%
+  collect()
+
+write.csv(params_xg, "big_xgboost_res_prostate.csv")
 toc()
+
+# for(i in 1:nrow(params_xg)){
+#   
+#   # xgb
+#   temp_model <- xgb.cv(data=as.matrix(prostate_train[,-9]), label=prostate_train$lpsa, 
+#                        max_depth=params_xg$max_depth[i],
+#                        eta=params_xg$eta[i],
+#                        subsample=params_xg$subsample[i],
+#                        nrounds=params_xg$nrounds[i],
+#                        objective="reg:linear", nfold=5, verbose = 0)
+#   
+#   eval_log <- temp_model$evaluation_log
+#   min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
+#   
+#   params_xg$rmse[i] <- min_res_cv$test_rmse_mean
+#   print(i)
+# }
+# toc()
 
 # Wow that was fast, only 26.83 seconds
 # Best model fit with parameters:
 
 # eta nrounds max_depth subsample      rmse
 # 0.75    20         3         1   0.9940256
+
+# Actual predictive accuracy
 
 # COntinue with the interpretation work after setting up the last part
 
