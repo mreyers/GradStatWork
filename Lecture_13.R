@@ -422,41 +422,79 @@ cv_results_d12 <- xg_d12$evaluation_log
 
 
 # Parameters to check: max_depth, eta, subsample, and nrounds
-tic()
-params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
-                      eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75), 
-                      subsample = list(c(0.5, 0.6, 0.75, 0.9, 1)),
-                      nrounds = list(c(20, 200, 500, 1000))) %>%
-  unnest(.preserve = c(max_depth, subsample)) %>% 
-  unnest(.preserve = subsample) %>% 
-  unnest() %>%
-  mutate(rmse = 0)
 
 # Train numerous models, gather testing criteria
 # Implement the lazy way
+# Nevermind, need to do the smart way cause this is heavy
 
-for(i in 1:nrow(params_xg)){
-  
-  # xgb
-  temp_model <- xgb.cv(data=as.matrix(prostate_train[,-9]), label=prostate_train$lpsa, 
-                       max_depth=params_xg$max_depth[i],
-                       eta=params_xg$eta[i],
-                       subsample=params_xg$subsample[i],
-                       nrounds=params_xg$subsample[i],
+xgb_fit_function <- function(data, depth, eta, subsample, nrounds){
+  temp_model <- xgb.cv(data=as.matrix(data[,-9]), label=data$lpsa, 
+                       max_depth= depth,
+                       eta= eta,
+                       subsample= subsample,
+                       nrounds= nrounds,
                        objective="reg:linear", nfold=5, verbose = 0)
   
   eval_log <- temp_model$evaluation_log
   min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
   
-  params_xg$rmse[i] <- min_res_cv$test_rmse_mean
+  return(min_res_cv$test_rmse_mean)
 }
+
+library(multidplyr)
+num_cores <- parallel::detectCores()
+cluster <- create_cluster(num_cores)
+
+# Copy over the libraries, functions and data needed
+cluster %>%
+  cluster_library("tidyverse") %>%
+  cluster_library("xgboost") %>%
+  cluster_assign_value("xgb_fit_function", xgb_fit_function) %>%
+  cluster_assign_value("prostate_train", prostate_train) %>%
+  cluster_assign_value("prostate_test", prostate_test)
+
+# use this cluster for all parallel stuff
+set_default_cluster(cluster)
+
+tic()
+params_xg <- expand.grid(max_depth = c(3, 6, 12, 20, 30),
+                      eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9),
+                      subsample = c(0.5, 0.6, 0.75, 0.9, 1),
+                      nrounds = c(20, 200, 500, 1000, 2000, 4000, 8000)) %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(.))) %>%
+  partition(cluster_group, cluster = cluster) %>%
+  mutate(rmse_values = pmap_dbl(list(max_depth, eta, subsample, nrounds),
+                                ~ xgb_fit_function(prostate_train, ..1, ..2, ..3, ..4))) %>%
+  collect()
+
+write.csv(params_xg, "big_xgboost_res_prostate.csv")
 toc()
+
+# for(i in 1:nrow(params_xg)){
+#   
+#   # xgb
+#   temp_model <- xgb.cv(data=as.matrix(prostate_train[,-9]), label=prostate_train$lpsa, 
+#                        max_depth=params_xg$max_depth[i],
+#                        eta=params_xg$eta[i],
+#                        subsample=params_xg$subsample[i],
+#                        nrounds=params_xg$nrounds[i],
+#                        objective="reg:linear", nfold=5, verbose = 0)
+#   
+#   eval_log <- temp_model$evaluation_log
+#   min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
+#   
+#   params_xg$rmse[i] <- min_res_cv$test_rmse_mean
+#   print(i)
+# }
+# toc()
 
 # Wow that was fast, only 26.83 seconds
 # Best model fit with parameters:
 
 # eta nrounds max_depth subsample      rmse
 # 0.75    20         3         1   0.9940256
+
+# Actual predictive accuracy
 
 # COntinue with the interpretation work after setting up the last part
 
@@ -472,25 +510,31 @@ abalone <- abalone %>%
 num_folds <- 20
 r_vec <- sample(1:num_folds, dim(abalone)[1], replace=TRUE)
 
-params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
+# This could have been written better but it should serve as is
+xgb_fit_function_abalone <- function(data, depth, eta, subsample, nrounds){
+  temp_model <- xgb.cv(data=as.matrix(data[,-9]), label=data$Rings, 
+                       max_depth= depth,
+                       eta= eta,
+                       subsample= subsample,
+                       nrounds= nrounds,
+                       objective="reg:linear", nfold=5,
+                       early_stopping_rounds = 5,
+                       verbose = 0)
+  
+  eval_log <- temp_model$evaluation_log
+  min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
+  
+  return(min_res_cv$test_rmse_mean)
+}
+# # # # # # # # # # # # # #
+# Fix this for parallel, using similar function as earlier but with abalone data
+params_xg <- expand.grid(max_depth = c(3, 6, 12, 20, 30),
                          eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75), 
-                         subsample = list(c(0.5, 0.6, 0.75, 0.9, 1)),
-                         nrounds = list(c(20, 200, 500, 1000))) %>%
-  unnest(.preserve = c(max_depth, subsample)) %>% 
-  unnest(.preserve = subsample) %>% 
-  unnest() %>%
+                         subsample = c(0.5, 0.6, 0.75, 0.9, 1),
+                         nrounds = c(20, 200, 500, 1000)) %>%
   mutate(rmse = 0,
          predict = 0)
 
-
-# params_new <- expand.grid(interaction_depth = list(c(1:8)),
-#                           shrinkage = c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75), 
-#                           bag_fraction = list(c(0.7, 0.75, 0.8, 0.85, 0.9))) %>%
-#   unnest(.preserve = interaction_depth) %>% 
-#   unnest() %>%
-#   mutate(tree_count = 0,
-#          oob = 0,
-#          predict = 0)
 
 # Set up stuff for easy tune saving
 res_gbm_noloop <- tibble()
@@ -508,7 +552,7 @@ res_gbm <- tibble(iter = 1:20, data = list(0))
 #Need to do some thinking about how to implement this appropriately
 # Storage is the key
 tic()
-for(i in 1:num_folds){
+for(i in 1:1){
   
   abalone_train_split <- abalone %>%
     dplyr::filter(folds != i) %>%
@@ -519,22 +563,24 @@ for(i in 1:num_folds){
     dplyr::select(-folds)
   
   # gbm
-  ez_gbm <- eztune(x=abalone_train_split[,-9],
-                   y=abalone_train_split$Rings, method="gbm", optimizer="hjn", fast=0.75)
+  # ez_gbm <- eztune(x=abalone_train_split[,-9],
+  #                  y=abalone_train_split$Rings, method="gbm", optimizer="hjn", fast=0.75)
+  # 
+  # ez_gbm_fit <- gbm(data=abalone_train_split, Rings ~., distribution="gaussian", 
+  #                   n.trees=ez_gbm$n.trees, interaction.depth=ez_gbm$interaction.depth, 
+  #                   shrinkage=ez_gbm$shrinkage, n.minobsinnode=ez_gbm$n.minobsinnode,
+  #                   cv.folds=5, bag.fraction = 0.5) # Can use smaller because already tuned
+  # 
+  # results_iter <- tibble(fold = i,
+  #                        tree_count = which.min(ez_gbm_fit$cv.error),
+  #                        oob = sqrt(min(ez_gbm_fit$cv.error)),
+  #                        rmspe = sqrt(mean(
+  #                          (abalone_test_split$Rings - predict(ez_gbm_fit, abalone_test_split))^2)))
+  # 
+  # res_gbm_noloop <- res_gbm_noloop %>%
+  #   bind_rows(results_iter)
+  # 
   
-  ez_gbm_fit <- gbm(data=abalone_train_split, Rings ~., distribution="gaussian", 
-                    n.trees=ez_gbm$n.trees, interaction.depth=ez_gbm$interaction.depth, 
-                    shrinkage=ez_gbm$shrinkage, n.minobsinnode=ez_gbm$n.minobsinnode,
-                    cv.folds=5, bag.fraction = 0.5) # Can use smaller because already tuned
-  
-  results_iter <- tibble(fold = i,
-                         tree_count = which.min(ez_gbm_fit$cv.error),
-                         oob = sqrt(min(ez_gbm_fit$cv.error)),
-                         rmspe = sqrt(mean(
-                           (abalone_test_split$Rings - predict(ez_gbm_fit, abalone_test_split))^2)))
-  
-  res_gbm_noloop <- res_gbm_noloop %>%
-    bind_rows(results_iter)
   
   # for(j in 1:nrow(params_new)){
   #   # gbm
@@ -560,32 +606,46 @@ for(i in 1:num_folds){
   abalone_test_split <- abalone_test_split %>%
     mutate(Sex = as.numeric(Sex))
   
-  for(k in 1:nrow(params_xg)){
-    # xgb stuff
-    temp_model <- xgb.cv(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
-                         max_depth=params_xg$max_depth[k],
-                         eta=params_xg$eta[k],
-                         subsample=params_xg$subsample[k],
-                         nrounds=params_xg$subsample[k],
-                         objective="reg:linear", nfold=5, verbose = 0)
-    
-    act_model <- xgboost(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
-                     max_depth=params_xg$max_depth[k],
-                     eta=params_xg$eta[k],
-                     subsample=params_xg$subsample[k],
-                     nrounds=params_xg$subsample[k],
-                     objective="reg:linear", verbose = 0)
-    
-    eval_log <- temp_model$evaluation_log
-    min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
-    
-    params_xg$rmse[k] <- min_res_cv$test_rmse_mean
-    
-    # Need to add in an actual model, the xgb.cv object is not appropriate for predict()
-    params_xg$predict[k] <- sqrt(mean(
-      (abalone_test_split$Rings - predict(act_model, as.matrix(abalone_test_split[,-9])))^2))
-  }
+  cluster %>%
+    cluster_assign_value("abalone_train_split", abalone_train_split) %>%
+    cluster_assign_value("xgb_fit_function_abalone", xgb_fit_function_abalone)
   
+  params_xg <- expand.grid(max_depth = c(3, 6, 12, 20, 30),
+                           eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75), 
+                           subsample = c(0.5, 0.6, 0.75, 0.9, 1),
+                           nrounds = c(20, 200, 500, 1000)) %>%
+    mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(.))) %>%
+    partition(cluster_group, cluster = cluster) %>%
+    mutate(rmse_values = pmap_dbl(list(max_depth, eta, subsample, nrounds),
+                                  ~ xgb_fit_function_abalone(abalone_train_split, ..1, ..2, ..3, ..4))) %>%
+    collect()
+  
+  # for(k in 1:nrow(params_xg)){
+  #   # xgb stuff
+  #   temp_model <- xgb.cv(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
+  #                        max_depth=params_xg$max_depth[k],
+  #                        eta=params_xg$eta[k],
+  #                        subsample=params_xg$subsample[k],
+  #                        nrounds=params_xg$nrounds[k],
+  #                        objective="reg:linear", nfold=5, verbose = 0)
+  #   
+  #   act_model <- xgboost(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
+  #                    max_depth=params_xg$max_depth[k],
+  #                    eta=params_xg$eta[k],
+  #                    subsample=params_xg$subsample[k],
+  #                    nrounds=params_xg$nrounds[k],
+  #                    objective="reg:linear", verbose = 0)
+  #   
+  #   eval_log <- temp_model$evaluation_log
+  #   min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
+  #   
+  #   params_xg$rmse[k] <- min_res_cv$test_rmse_mean
+  #   
+  #   # Need to add in an actual model, the xgb.cv object is not appropriate for predict()
+  #   params_xg$predict[k] <- sqrt(mean(
+  #     (abalone_test_split$Rings - predict(act_model, as.matrix(abalone_test_split[,-9])))^2))
+  # }
+  # 
   # Save the data frame to the tibble for xgb
   res_xgb$data[i] <- list(params_xg)
   print(i)
