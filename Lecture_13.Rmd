@@ -1,15 +1,15 @@
-# Lecture 13: Gradient Boosting
+---
+title: "Lecture_13"
+author: "Matthew Reyers"
+date: "November 4, 2019"
+output: html_document
+---
 
+Begin Lecture 13 Assignment: Gradient Boosting.
 
-# 1.
-# In the Prostate data, use the training set to fit boosted trees using gbm(). Play
-# with the tuning parameters until you find a combination that seems to minimize some
-# measure of test error without touching the test set. Note that you can set ntrees to
-# be fairly large and let the internal CV choose the optimum value for a given set of
-# tuning parameters, although this could mean nested resampling if you use bootstrap
-# or CV to tune combinations of the other tuning parameters.1 You may instead prefer
-# to set the number of trees as another parameter in the grid and tell gbm() not to do
-# crossvalidation.
+# 1. In the Prostate data, use the training set to fit boosted trees using gbm(). Play with the tuning parameters until you find a combination that seems to minimize some measure of test error without touching the test set. Note that you can set ntrees to be fairly large and let the internal CV choose the optimum value for a given set of tuning parameters, although this could mean nested resampling if you use bootstrap or CV to tune combinations of the other tuning parameters.1 You may instead prefer to set the number of trees as another parameter in the grid and tell gbm() not to do crossvalidation.
+
+```{r}
 
 library(gbm)
 library(tidyverse)
@@ -155,14 +155,10 @@ toc()
 
 # Priority: Shrinkage, interaction depth, (minnodes and bag frac)
 
-# Perhaps EZtune will be useful
-library(EZtune)
-ez_gbm = eztune(x=prostate_train[,-9], y=prostate_train$lpsa, method="gbm", optimizer="hjn", fast=FALSE)
+```
 
-ez_gbm
-# gbm(data=AQ, Ozone~Wind+Temp, distribution="gaussian", 
-#     n.trees=EZ.gbm$n.trees, interaction.depth=EZ.gbm$interaction.depth, 
-#     shrinkage=EZ.gbm$shrinkage, n.minobsinnode=EZ.gbm$n.minobsinnode)
+
+```{r, eval=FALSE}
 
 # eztune(x, y, method, optimizer, fast)
 params <- expand.grid(interaction_depth = list(c(1, 2, 4)),
@@ -191,10 +187,9 @@ for(i in 1:nrow(params)){
 # Optimal parameters on this run were:
 #  shrinkage bag_fraction interaction_depth tree_count      rmse
 #     0.3          0.8                 2         15       0.7358375
+best_param_basic <- params %>% arrange(rmse) %>% dplyr::slice(1)
 
-test_model <- gbm(data = prostate_train, lpsa ~ ., distribution = 'gaussian',
-                  n.trees = 15, shrinkage = 0.3, bag.fraction = 0.8, interaction.depth = 2)
-true_test_err <- mean((prostate_test$lpsa - predict(test_model, prostate_test, n.trees = 15))^2)
+
 
 # Since the data set is so small, try with a greatly expanded grid
 # This should train reasonably fast as the current grid took only a few minutes
@@ -207,7 +202,7 @@ params_new <- expand.grid(interaction_depth = list(c(1:8)),
          rmse = 0)
 
 n_cores <- parallel::detectCores()
-# This will take roughly 8 times longer than the first set
+# This will take roughly 8 times longer than the first set due to grid size
 for(i in 1:nrow(params_new)){
   
   temp_model <- gbm(data=prostate_train, lpsa ~ ., distribution="gaussian", 
@@ -219,43 +214,60 @@ for(i in 1:nrow(params_new)){
   params_new$tree_count[i] <- which.min(temp_model$cv.error)
   params_new$rmse[i] <- sqrt(min(temp_model$cv.error))
 }
-
+params_new %>% arrange(rmse) %>% View()
 # The best parameters here were:
 # shrinkage bag_fraction interaction_depth tree_count      rmse
 #     0.01          0.9                 6        741    0.7146581
+best_params_expanded <- params_new %>% arrange(rmse) %>% dplyr::slice(1)
+
+
+```
+
+```{r}
+set.seed(120401002)
+basic_grid <- read_csv('prostate_basic_grid.csv', col_types = cols())
+(best_param_basic <- basic_grid %>% arrange(rmse) %>% dplyr::slice(1))
+
+
+test_model <- gbm(data = prostate_train, lpsa ~ ., distribution = 'gaussian',
+                  n.trees = 10000, shrinkage = best_param_basic$shrinkage,
+                  bag.fraction = best_param_basic$bag_fraction,
+                  interaction.depth = best_param_basic$interaction_depth)
+(true_test_err <- mean((prostate_test$lpsa - predict(test_model, prostate_test, 
+                                                    n.trees = best_param_basic$tree_count))^2))
+
+expanded_grid <- read_csv('prostate_expand_grid.csv', col_types = cols())
+(best_params_expanded <- expanded_grid %>% arrange(rmse) %>% dplyr::slice(1))
 
 test_model_2 <- gbm(data = prostate_train, lpsa ~ ., distribution = 'gaussian',
-                  n.trees = 741, shrinkage = 0.01, bag.fraction = 0.9, interaction.depth = 6)
-true_test_err_2 <- mean((prostate_test$lpsa - predict(test_model_2, prostate_test, n.trees = 741))^2)
+                  n.trees = 10000, shrinkage = best_params_expanded$shrinkage,
+                  bag.fraction = best_params_expanded$bag_fraction,
+                  interaction.depth = best_params_expanded$interaction_depth)
 
-# a) Describe the process and talk a little about some of the decisions I made:
-# Choice of test error, combinations tried, and why I did not choose other values
+(true_test_err_2 <- mean((prostate_test$lpsa - predict(test_model_2, prostate_test, 
+                                                      n.trees = best_params_expanded$tree_count))^2))
 
-# The process here was a standard iterative approach with what should be a little bit of forethought. 
-# This meant that I played around with some fixed values while varying other parameters to get an idea of 
-# how important the parameters each mattered. I got a rough idea that the most important parameters to
-# explore were shrinkage and interaction depth. This came from large changes in RMSE and 
-# small minimum values. 
+```
 
-# I then built an actual cross validation process in which a larger grid was used. This grid incorporated
-# more shrinkage and interaction depth terms than it would have otherwise. In training, the selected model
-# was chosen for its minimum RMSE value, generated by measuring prediction errors on the out of sample fold.
-# Note that I did not explicitly train on trees as I can get optimal number of trees as an output in the
-# training process naturally.
+# a) Describe the process and talk a little about some of the decisions I made: Choice of test error, combinations tried, and why I did not choose other values
+
+The process here was a standard iterative approach with what should be a little bit of forethought. This meant that I played around with some fixed values while varying other parameters to get an idea of  how important each parameter mattered. I got a rough idea that the most important parameters to explore were shrinkage and interaction depth. This came from large changes in RMSE and small minimum RMSE values. 
+
+I then built an actual grid search with a cross validation process in which a larger grid was used. This grid incorporated more shrinkage and interaction depth terms than it would have otherwise. In training, the selected model was chosen for its minimum RMSE value, generated by measuring prediction errors on the out of sample fold. Note that I did not explicitly train the number of trees as I can get the optimal number of trees as an output in the training process naturally.
+
+The resulting model is then the second model trained above, using the results from the expanded grid. Since the tuning parameters selected are not on the boundary points of my grid, I feel that I am reasonably safe with these as my selected parameters. I could make the grid more granular but I am content with the spacing of the values currently. 
+
+Do note that there is some variability in the above fitting procedures. Without the set seed above the fits and predictions can be a little different due to the inherent variability in the gbm process. This means that other values of the parameters may very well be equally valid or possibly even better overall, they just were not in this specific seed. 
 
 # b) For the final model,
-
 ## i) Report the variable importance and all of the partial dependence plots. Comment/compare to past. 
-opt_model <- gbm(data=prostate_train, lpsa ~ ., distribution="gaussian", 
-                 n.trees=741, interaction.depth=6,
-                 shrinkage=0.01, 
-                 bag.fraction=0.9,
-                 cv.folds=5, n.cores = n_cores)
+
+```{r}
+opt_model <- test_model_2
+
 gbm.perf(opt_model, method="cv" ) 
 summary(opt_model)
 
-# lcavol is overwhelmingly relevant relative to the other variables in the data set. This is consistent 
-# with previous modeling as lcavol frequently comes out as a highly relevant predictor.
 
 # Partial dependence plots
 plot(opt_model, i.var = 1)
@@ -267,9 +279,18 @@ plot(opt_model, i.var = 6)
 plot(opt_model, i.var = 7)
 plot(opt_model, i.var = 8)
 
-# Still need to discuss these a bit
+```
 
-# 2, Repeat exercise 1 with xgboost and relevant complement functions
+`lcavol` is overwhelmingly relevant relative to the other variables in the data set. This is consistent  with previous modeling as lcavol frequently comes out as a highly relevant predictor.
+
+
+## ii) Report the training error and the MSPE from the test data. Comment
+
+Forgot to do this, finish tonight.
+
+# 2. Repeat exercise 1 with xgboost and relevant complement functions
+
+```{r}
 library(xgboost)
 
 # Fit a basic xgboost model, note that it is a list format and is a bit more tedious to work with
@@ -460,182 +481,5 @@ toc()
 
 # COntinue with the interpretation work after setting up the last part
 
-# 3. Set up gbm with OOB and xgboost with 5 fold CV.
-set.seed(890987665)
-abalone <- read_csv("Abalone.csv")
+```
 
-# Remove outliers in height
-abalone <- abalone %>%
-  filter(Height > 0 & Height < 0.5) %>%
-  mutate(Sex = as.factor(Sex))
-
-num_folds <- 20
-r_vec <- sample(1:num_folds, dim(abalone)[1], replace=TRUE)
-
-params_xg <- expand.grid(max_depth = list(c(3, 6, 12, 20, 30)),
-                         eta = c(0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75), 
-                         subsample = list(c(0.5, 0.6, 0.75, 0.9, 1)),
-                         nrounds = list(c(20, 200, 500, 1000))) %>%
-  unnest(.preserve = c(max_depth, subsample)) %>% 
-  unnest(.preserve = subsample) %>% 
-  unnest() %>%
-  mutate(rmse = 0,
-         predict = 0)
-
-
-# params_new <- expand.grid(interaction_depth = list(c(1:8)),
-#                           shrinkage = c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75), 
-#                           bag_fraction = list(c(0.7, 0.75, 0.8, 0.85, 0.9))) %>%
-#   unnest(.preserve = interaction_depth) %>% 
-#   unnest() %>%
-#   mutate(tree_count = 0,
-#          oob = 0,
-#          predict = 0)
-
-# Set up stuff for easy tune saving
-res_gbm_noloop <- tibble()
-
-n_cores <- parallel::detectCores()
-# This will take roughly 8 times longer than the first set
-
-abalone <- abalone %>%
-  mutate(folds = r_vec)
-
-# Store the resulting data frames as list objects in each corresponding frame
-res_xgb <- tibble(iter = 1:20, data = list(0))
-res_gbm <- tibble(iter = 1:20, data = list(0))
-
-#Need to do some thinking about how to implement this appropriately
-# Storage is the key
-tic()
-for(i in 1:num_folds){
-  
-  abalone_train_split <- abalone %>%
-    dplyr::filter(folds != i) %>%
-    dplyr::select(-folds)
-  
-  abalone_test_split <- abalone %>%
-    filter(folds == i) %>%
-    dplyr::select(-folds)
-  
-  # gbm
-  ez_gbm <- eztune(x=abalone_train_split[,-9],
-                   y=abalone_train_split$Rings, method="gbm", optimizer="hjn", fast=0.75)
-  
-  ez_gbm_fit <- gbm(data=abalone_train_split, Rings ~., distribution="gaussian", 
-                    n.trees=ez_gbm$n.trees, interaction.depth=ez_gbm$interaction.depth, 
-                    shrinkage=ez_gbm$shrinkage, n.minobsinnode=ez_gbm$n.minobsinnode,
-                    cv.folds=5, bag.fraction = 0.5) # Can use smaller because already tuned
-  
-  results_iter <- tibble(fold = i,
-                         tree_count = which.min(ez_gbm_fit$cv.error),
-                         oob = sqrt(min(ez_gbm_fit$cv.error)),
-                         rmspe = sqrt(mean(
-                           (abalone_test_split$Rings - predict(ez_gbm_fit, abalone_test_split))^2)))
-  
-  res_gbm_noloop <- res_gbm_noloop %>%
-    bind_rows(results_iter)
-  
-  # for(j in 1:nrow(params_new)){
-  #   # gbm
-  #   temp_model <- gbm(data= abalone_train_split, Rings ~ ., distribution="gaussian", 
-  #                     n.trees=10000, interaction.depth=params_new$interaction_depth[j],
-  #                     shrinkage=params_new$shrinkage[j], 
-  #                     bag.fraction=params_new$bag_fraction[j],
-  #                     cv.folds=5, n.cores = n_cores)
-  #   
-  #   params_new$tree_count[j] <- which.min(temp_model$cv.error)
-  #   params_new$oob[j] <- sqrt(min(temp_model$cv.error))
-  #   params_new$predict[j] <- sqrt(mean((abalone_test_split$Rings - predict(temp_model, abalone_test_split))^2))
-  # }
-  
-  # Save the tibble to the data frame for gbm
-  #res_gbm$data[i] <- params_new %>% nest()
-  print("Done the gbm step")
-  
-  # Need to convert Sex to numeric because it is making my matrix character data
-  abalone_train_split <- abalone_train_split %>%
-    mutate(Sex = as.numeric(Sex))
-  
-  abalone_test_split <- abalone_test_split %>%
-    mutate(Sex = as.numeric(Sex))
-  
-  for(k in 1:nrow(params_xg)){
-    # xgb stuff
-    temp_model <- xgb.cv(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
-                         max_depth=params_xg$max_depth[k],
-                         eta=params_xg$eta[k],
-                         subsample=params_xg$subsample[k],
-                         nrounds=params_xg$subsample[k],
-                         objective="reg:linear", nfold=5, verbose = 0)
-    
-    act_model <- xgboost(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
-                     max_depth=params_xg$max_depth[k],
-                     eta=params_xg$eta[k],
-                     subsample=params_xg$subsample[k],
-                     nrounds=params_xg$subsample[k],
-                     objective="reg:linear", verbose = 0)
-    
-    eval_log <- temp_model$evaluation_log
-    min_res_cv <- eval_log[which.min(eval_log$test_rmse_mean), 4]
-    
-    params_xg$rmse[k] <- min_res_cv$test_rmse_mean
-    
-    # Need to add in an actual model, the xgb.cv object is not appropriate for predict()
-    params_xg$predict[k] <- sqrt(mean(
-      (abalone_test_split$Rings - predict(act_model, as.matrix(abalone_test_split[,-9])))^2))
-  }
-  
-  # Save the data frame to the tibble for xgb
-  res_xgb$data[i] <- list(params_xg)
-  print(i)
-}
-toc()
-# Write the two data frames to csv
-# gbm
-#res_gbm_noloop %>% write.csv('gbm_results.csv')
-# backup_gbm <- res_gbm_noloop
-# xgb
-#res_xgb %>% unnest() %>% write.csv('xgb_results.csv')
-# backup_xgb <- res_xgb
-
-# Forgot to do the default settings for each split
-res_default <- tibble(fold = 1:num_folds, rmspe_gbm = 0, rmspe_xgb = 0)
-for(i in 1:num_folds){
-  
-  # gbm first
-  abalone_train_split <- abalone %>%
-    dplyr::filter(folds != i) %>%
-    dplyr::select(-folds)
-  
-  abalone_test_split <- abalone %>%
-    filter(folds == i) %>%
-    dplyr::select(-folds)
-  
-  # Default is 100 trees, not being detected though
-  gbm_fit <- gbm(data=abalone_train_split, Rings ~., distribution="gaussian", n.trees = 100)
-  
-  # Default param has no cv.folds so there is no oob calculation
-  # res_default$oob_gbm[i] <- sqrt(min(gbm_fit$cv.error))
-  
-  # Not sure why I needed to manually add here, the gbm_fit object has an n.trees element
-  res_default$rmspe_gbm[i] <- sqrt(mean(
-    (abalone_test_split$Rings - predict(gbm_fit, abalone_test_split, n.trees = 100))^2))
-  
-  # xgb second
-  # Need to convert Sex to numeric because it is making my matrix character data
-  abalone_train_split <- abalone_train_split %>%
-    mutate(Sex = as.numeric(Sex))
-  
-  abalone_test_split <- abalone_test_split %>%
-    mutate(Sex = as.numeric(Sex))
-  
-  xgb_fit <- xgboost(data=as.matrix(abalone_train_split[,-9]), label=abalone_train_split$Rings, 
-          nrounds = 20, objective="reg:linear", verbose = 0)
-  
-  # Fit criteria to report
-  res_default$rmspe_xgb[i] <- sqrt(mean(
-    (abalone_test_split$Rings - predict(xgb_fit, as.matrix(abalone_test_split[,-9])))^2))
-}
-
-# Now start the proper write up, at least in preparation
