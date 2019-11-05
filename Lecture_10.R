@@ -219,6 +219,15 @@ boot_test <- function(raw_data, resamp){
   return(prostate_test)
 }
 
+# The actual test data needs its own function for matters of mutate() in my tibble steps later
+boot_true_test <- function(raw_data, resamp, true_test){
+  prostate_train <- raw_data %>%
+    filter(row_number() %in% resamp)
+  
+  true_test[, 1:8] <- rescale(true_test[, 1:8], prostate_train[, 1:8])
+  return(true_test)
+}
+
 # Fix this, returning too many values
 splitFun <- function(train, test, size, decay, true_test_x, true_test_y){
   # grid_start <- data.frame(train = train, test = test, size = size, decay = decay) %>%
@@ -231,7 +240,7 @@ splitFun <- function(train, test, size, decay, true_test_x, true_test_y){
   # 
   MSE.final <- 9e99
   se_all <- 0
-  for(i in 1:100){
+  for(i in 1:20){
     nnet_obj <- nnet(lpsa ~ ., data = train, size = size, decay = decay, linout = TRUE, trace = FALSE,
                      maxit = 500)
     MSE <- nnet_obj$value/nrow(train)
@@ -242,7 +251,6 @@ splitFun <- function(train, test, size, decay, true_test_x, true_test_y){
       
     }
   }
-  
   
   sMSE <- nn.final$value / nrow(train)
   predictions <- predict(nn.final, true_test_x)
@@ -259,15 +267,18 @@ cluster %>%
   cluster_library("nnet") %>%
   cluster_assign_value("boot_train", boot_train) %>%
   cluster_assign_value("boot_test", boot_test) %>%
-  cluster_assign_value("splitFun", splitFun)
+  cluster_assign_value("splitFun", splitFun) %>%
+  cluster_assign_value('boot_true_test', boot_true_test)
 
+grid <- expand.grid(size = c(1, 3, 5, 7, 10, 15), decay = c(0, 0.001, 0.1, 0.15, 0.25, 0.5, 1, 2))
 
 tic()
-boot_1_df <- tibble(B = 1:B, prostate = prostate_train$data, prostate_true_test = prostate_test$data) %>%
+boot_1_df <- tibble(B = 1:B, prostate = prostate_train_nest$data,
+                    prostate_true_test = prostate_test_nest$data) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
          test = map2(prostate, resamp, ~ boot_test(.x, .y)),
-         true_test_x = map2(prostate_true_test, train, ~rescale(.x[,1:8], .y[,1:8])),
+         true_test_x = map2(prostate_true_test, prostate, ~rescale(.x[,1:8], .y[,1:8])),
          true_test_y = map(prostate_true_test, ~.$lpsa))
 
 split_res <- grid %>% nest()
@@ -309,16 +320,21 @@ boot_1_df %>%
   filter(MSPR < 1.5) %>%
   plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'contour')
 
+boot_1_df %>%
+  select(B, size, decay, pred_values) %>%
+  unnest() %>%
+  write.csv("part1.csv")
 
 # B = 4
 tic()
 B_4 <- 4
-boot_4_df <- tibble(B = list(1:B_4), prostate = prostate_train$data, prostate_true_test = prostate_test$data) %>%
+boot_4_df <- tibble(B = list(1:B_4), prostate = prostate_train_nest$data,
+                    prostate_true_test = prostate_test_nest$data) %>%
   unnest(.preserve = c(prostate, prostate_true_test)) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
          test = map2(prostate, resamp, ~ boot_test(.x, .y)),
-         true_test_x = map2(prostate_true_test, train, ~rescale(.x[,1:8], .y[,1:8])),
+         true_test_x = map2(prostate_true_test, prostate, ~rescale(.x[,1:8], .y[,1:8])),
          true_test_y = map(prostate_true_test, ~.$lpsa))
 
 
@@ -349,32 +365,46 @@ boot_4_df %>%
   filter(MSPR < 1.5) %>%
   plot_ly(x = ~size, y = ~decay, z = ~MSPR, type = 'contour')
 
+boot_4_df %>%
+  select(B, size, decay, pred_values) %>%
+  unnest() %>%
+  write.csv('part2.csv')
+
 # B = 20
 tic()
+prostate_train_nest <- prostate_train %>% nest()
+prostate_test_nest <- prostate_test %>% nest()
+
 B_20 <- 20
-boot_20_df <- tibble(B = list(1:B_20), prostate = prostate_train$data,
-                     prostate_true_test = prostate_test$data) %>%
+boot_20_pros <- tibble(B = list(1:B_20), prostate = prostate_train_nest$data,
+                     prostate_true_test = prostate_test_nest$data) %>%
   unnest(.preserve = c(prostate, prostate_true_test)) %>%
   mutate(resamp = map(prostate, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
          train = map2(prostate, resamp, ~ boot_train(.x, .y)),
          test = map2(prostate, resamp, ~ boot_test(.x, .y)),
-         true_test_x = map2(prostate_true_test, train, ~rescale(.x[,1:8], .y[,1:8])),
+         true_test_x = pmap(list(prostate, resamp, prostate_true_test),
+                            ~boot_true_test(..1, ..2, ..3)),
          true_test_y = map(prostate_true_test, ~.$lpsa))
 
 
 split_res <- grid %>% nest()
 
-boot_20_df <- boot_20_df %>%
+boot_20_pros <- boot_20_pros %>%
   mutate(grid_stuff = split_res$data) %>%
   select(-resamp, -prostate, -prostate_true_test) %>%
   unnest(.preserve = c(train, test, true_test_x, true_test_y)) 
 
-boot_20_df <- boot_20_df %>%
-  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
+boot_20_pros <- boot_20_pros %>%
+  mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_pros))) %>%
   partition(cluster_group, cluster = cluster) %>%
   mutate(pred_values = pmap(list(train, test, size, decay, true_test_x, true_test_y),
                             ~ splitFun(..1, ..2, ..3, ..4, ..5, ..6))) %>%
   collect()
+
+boot_20_pros %>%
+  select(B, size, decay, pred_values) %>%
+  unnest() %>%
+  write.csv('part3.csv')
 toc()
 
 # boot_20_df %>% 
@@ -505,7 +535,7 @@ boot_20_df %>%
          MSPE_train = MSPE_train / min_mspr) %>%
   ggplot(aes(x = as.factor(size), y = MSPE_train)) +
   geom_boxplot() +
-  ggtitle("Relative MSPR by Decay and Size Combination") +
+  ggtitle("Relative MSPR by Size") +
   xlab("Size") +
   scale_y_continuous(limits = c(1,2)) +
   theme_bw() +
@@ -519,7 +549,7 @@ boot_20_df %>%
          MSPE_train = MSPE_train / min_mspr) %>%
   ggplot(aes(x = as.factor(decay), y = MSPE_train)) +
   geom_boxplot() +
-  ggtitle("MSPR by Decay and Size Combination") +
+  ggtitle("MSPR by Decay") +
   xlab("Decay") +
   scale_y_continuous(limits = c(1, 3)) +
   theme_bw() +
@@ -539,6 +569,14 @@ boot_20_df %>%
   summarize(MSPE_train = mean(MSPE_train)) %>%
   filter(MSPE_train < 2) %>%
   plot_ly(x = ~decay, y = ~size, z = ~MSPE_train, type = 'contour')
+
+boot_20_df %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  ungroup() %>%
+  left_join(minimum_mspe_train) %>%
+  mutate(se = se_all,
+         MSPE_train = MSPE_train / min_mspr) %>%
+  select(-train, -test, -true_test_x, -true_test_y) %>% write.csv("boot_20_reproducible.csv")
 
 # Most of the good values lie on decay 1 with varying sizes. There may be reason to suggest using a size
 # larger than 10 with decay 1 to get better results. Further, the minimum value actually occurs at
@@ -598,12 +636,18 @@ boot_20_df %>%
   filter(MSPE_train < 2) %>%
   plot_ly(x = ~decay, y = ~size, z = ~MSPE_train, type = 'contour')
 
-# Decay of 0.5, any size 3 or greater. This grid seems conclusive.
+# Decay of 0.5, any size 3 or greater. This grid seems conclusive. I will choose Decay = 0.5, 
+# size = 13. 
 
 # (f) Report the MSPE from the test set for the chosen model only using each B, and
 # compare these three to past results. (Note that these MSPEs are also based on
 # very small n, so small differences are not very meaningful.)
-
+boot_20_df %>%
+  filter(decay == 0.5, size == 13) %>%
+  ungroup() %>% # To remove parallel groupings
+  arrange(B) %>%
+  unnest(.preserve = c(train, test, true_test_x, true_test_y)) %>%
+  select(B, MSPR)
 
 # 3. In the Abalone data, we will rerun the 20-splits problem using neural nets. The difficulty
 # here is that you need to be able to tune the NNs and select a “best” set of tuning
@@ -631,7 +675,7 @@ boot_train_ab <- function(raw_data, resamp){
     filter(!(row_number() %in% resamp))
   
   # Skip y, dont scale
-  prostate_train[, 1:7] <- rescale(prostate_train[, 1:7], prostate_train[, 1:7])
+  prostate_train[, 2:10] <- rescale(prostate_train[, 2:10], prostate_train[, 2:10])
   return(prostate_train)
 }
 
@@ -644,11 +688,19 @@ boot_test_ab <- function(raw_data, resamp){
     filter(!(row_number() %in% resamp)) 
   
   # Skip y, dont scale
-  prostate_test[, 1:7] <- rescale(prostate_test[, 1:7], prostate_train[, 1:7]) 
+  prostate_test[, 2:10] <- rescale(prostate_test[, 2:10], prostate_train[, 2:10]) 
   return(prostate_test)
 }
 
-splitFun_ab <- function(train, test, size, decay){
+boot_true_test_ab <- function(raw_data, resamp, true_test){
+  prostate_train <- raw_data %>%
+    filter(row_number() %in% resamp)
+  
+  true_test[, 2:10] <- rescale(true_test[,2:10], prostate_train[, 2:10])
+  return(true_test)
+}
+
+splitFun_ab <- function(train, test, size, decay, true_test_x, true_test_y){
   
   MSE.final <- 9e99
   for(i in 1:10){
@@ -663,10 +715,11 @@ splitFun_ab <- function(train, test, size, decay){
   
   
   sMSE <- nn.final$value / nrow(train)
-  predictions <- predict(nn.final, test)
-  MSPR <- mean((test$Rings - predictions)^2)
+  predictions <- predict(nn.final, true_test_x)
+  MSPE_train <- mean((test$Rings - predict(nn.final, test)) ^2)
+  MSPR <- mean((true_test_y - predictions)^2)
   
-  measures <- data.frame(sMSE = sMSE, MSPR = MSPR)
+  measures <- data.frame(MSPE_train = MSPE_train, MSPR = MSPR)
   return(measures)
 }
 # Edit this to return a neural net object
@@ -677,7 +730,9 @@ cluster %>%
   cluster_library("nnet") %>%
   cluster_assign_value("boot_train_ab", boot_train_ab) %>%
   cluster_assign_value("boot_test_ab", boot_test_ab) %>%
-  cluster_assign_value("splitFun_ab", splitFun_ab)
+  cluster_assign_value("splitFun_ab", splitFun_ab) %>%
+  cluster_assign_value("rescale", rescale) %>%
+  cluster_assign_value("boot_true_test_ab", boot_true_test_ab)
 
 
 # Need to build a function that handles all the splitting
@@ -691,51 +746,72 @@ for(i in 1:k){
   # Split the data
   abalone_splits <- abalone %>%
     mutate(folds = r_vec,
-           male_dummy = Sex == 1,
-           female_dummy = Sex == 2) 
+           male_dummy = as.numeric(Sex == 1),
+           female_dummy = as.numeric(Sex == 2))
   
   abalone_train_split <- abalone_splits %>%
     filter(folds != i) %>%
-    dplyr::select(-folds, -Sex) 
+    dplyr::select(-folds, -Sex) %>%
+    dplyr::select(Rings, everything())
   
   abalone_test_split <- abalone_splits %>%
     filter(folds == i) %>%
-    dplyr::select(-folds, -Sex) 
+    dplyr::select(-folds, -Sex) %>%
+    dplyr::select(Rings, everything())
   
   # Apply and time my functions, seems to run faster on laptop
   tic()
   B_20 <- 20
-  grid <- expand.grid(size = c(1, 3, 5, 7, 10, 15, 20), decay = c(0, 0.001, 0.1, 1, 2, 5))
+  grid <- expand.grid(size = c(1, 5, 10, 15, 20), decay = c(0.005, 0.01, 0.1, 0.25, 0.5))
   abalone_train_nest <- abalone_train_split %>% nest()
+  abalone_test_nest <- abalone_test_split %>% nest()
   
-  boot_20_df <- tibble(B = 1:B_20, abalone = abalone_train_nest$data) %>%
+  boot_20_df <- tibble(B = 1:B_20, abalone = abalone_train_nest$data, 
+                       abalone_true_test = abalone_test_nest$data) %>%
     mutate(resamp = map(abalone, ~ sample.int(n=nrow(.), size=nrow(.), replace=TRUE)),
            train = map2(abalone, resamp, ~ boot_train_ab(.x, .y)),
-           test = map2(abalone, resamp, ~ boot_test_ab(.x, .y)))
+           test = map2(abalone, resamp, ~ boot_test_ab(.x, .y)),
+           true_test_x = pmap(list(abalone, resamp, abalone_true_test),
+                              ~boot_true_test_ab(..1, ..2, ..3)),
+           true_test_y = map(abalone_true_test, ~.$Rings))
   
   
   split_res <- grid %>% nest()
   
   boot_20_df <- boot_20_df %>%
     mutate(grid_stuff = split_res$data) %>%
-    select(-resamp, -abalone) %>%
-    unnest(.preserve = c(train, test)) 
+    select(-abalone, -abalone_true_test) %>%
+    unnest(.preserve = c(train, test, true_test_x, true_test_y, resamp)) 
   
   boot_20_df <- boot_20_df %>%
     mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(boot_20_df))) %>%
     partition(cluster_group, cluster = cluster) %>%
-    mutate(pred_values = pmap(list(train, test, size, decay), ~ splitFun_ab(..1, ..2, ..3, ..4))) %>%
-    collect() %>%
-    select(-train, -test)
+    mutate(pred_values = pmap(list(train, test, size, decay, true_test_x, true_test_y),
+                              ~ splitFun_ab(..1, ..2, ..3, ..4, ..5, ..6))) %>%
+    collect()
   toc()
   
   res[i, 2] <- boot_20_df %>% ungroup() %>% nest()
+  print(i)
 }
 toc()
 # Need to design some grid to test parameters
 # Make sure to save results from each bootstrapped sample so that values can be compared
+careful <- boot_20_df
 
+boot_20_df %>%
+  ungroup() %>%
+  select(B, size, decay, pred_values) %>%
+  unnest() %>%
+  write.csv("fifth_iteration.csv")
 
+# The above should be modified to be the same as the code on the desktop at home
+# Load the desired results from the overnight run
+
+#overnight_nn_run <- read_csv('second_iteration.csv')
+#View(overnight_nn_run)
+
+# Crap there is a problem with my MSPR calculations in second_iteration.csv
 
 # TODO: Set up GCE stuff for this homework and get ready to crank some dope parallel stuff
 # This looks like it will work, I am content with the design
