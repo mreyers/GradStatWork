@@ -277,7 +277,7 @@ for(i in 1:20){
   }
   toc()
   res_gbm_loop$data[i] <- list(params) 
-  res_gbm_loop %>% unnest() %>% write.csv('gbm_project_progress.csv')
+  
   
   # RF
   tic()
@@ -303,7 +303,7 @@ for(i in 1:20){
   
   toc()
   res_rf_loop$data[i] <- list(rf_data) 
-  res_rf_loop %>% unnest() %>% write.csv('rf_project_progress.csv')
+  
 
   # NNet
   tic()
@@ -320,12 +320,16 @@ for(i in 1:20){
   
   toc()
   res_nnet_loop$data[i] <- list(nnet_data) 
-  res_nnet_loop %>% unnest() %>% write.csv('nnet_project_progress.csv')
+  
   
   # Measure how far I am
   print(i)
 }
 toc()
+
+res_gbm_loop %>% unnest() %>% write.csv('gbm_project_progress.csv')
+res_rf_loop %>% unnest() %>% write.csv('rf_project_progress.csv')
+res_nnet_loop %>% unnest() %>% write.csv('nnet_project_progress.csv')
 
 # The best model for gbm is fit with 
 #n.trees interaction.depth n.minobsinnode shrinkage bag.fraction avg_oob sd_oob
