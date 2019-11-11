@@ -210,14 +210,14 @@ params <- expand.grid(n.trees = c(200, 1000, 4000),
 
 # RF
 params_rf <- expand.grid(ntree = c(100, 500, 2000, 4000),
-                         mtry = c(3, 7, 10, 12),
+                         mtry = c(3, 7, 10),
                          replace = c(TRUE, FALSE),
-                         nodesize = c(1, 5, 10, 20))
+                         nodesize = c( 5, 10, 20))
 
 # NNet
-params_nnet <- expand.grid(size = c(1, 3, 5, 10, 15),
-                           decay = c(0, 0.001, 0.1, 1, 2),
-                           maxit = c(100, 500, 1000))
+params_nnet <- expand.grid(size = c(1, 5, 10, 20, 40),
+                           decay = c(0, 0.001, 0.1, 1, 2, 4, 6),
+                           maxit = c(500, 1000, 2000))
 
 # Set up parallel where appropriate
 num_cores <- parallel::detectCores()
@@ -232,15 +232,25 @@ cluster %>%
 # use this cluster for all parallel stuff
 set_default_cluster(cluster)
 
+# Define function to scale data for neural nets
+rescale <- function(x1,x2){
+  for(col in 1:ncol(x1)){
+    a <- min(x2[,col])
+    b <- max(x2[,col])
+    x1[,col] <- (x1[,col]-a)/(b-a)
+  }
+  x1
+}
+
 set.seed(12344321)
-res_gbm_loop <- tibble(fold = 1:20, data = list(0))
-res_rf_loop <- tibble(fold = 1:20, data = list(0))
-res_nnet_loop <- tibble(fold = 1:20, data = list(0))
+res_gbm_loop <- tibble(fold = 1:5, data = list(0))
+res_rf_loop <- tibble(fold = 1:5, data = list(0))
+res_nnet_loop <- tibble(fold = 1:5, data = list(0))
 
 # Results might not even be a fair comparison, forgot to change X1, X2, and X15 to categorical
 # Retraining with the variables now categorical
 tic()
-for(i in 1:20){
+for(i in 1:5){
   
   train$set <- ifelse(runif(nrow(train)) > 0.75, 1, 2)
   
@@ -261,14 +271,14 @@ for(i in 1:20){
   tic()
   # GBM
   for(j in 1:nrow(params)){
-    
-    temp_model <- gbm(data=this_train, Y ~ ., distribution="gaussian", 
+
+    temp_model <- gbm(data=this_train, Y ~ ., distribution="gaussian",
                       n.trees=params$n.trees[j], interaction.depth=params$interaction.depth[j],
-                      shrinkage=params$shrinkage[j], 
+                      shrinkage=params$shrinkage[j],
                       bag.fraction=params$bag.fraction[j],
                       n.minobsinnode = params$n.minobsinnode[j],
                       cv.folds=5, n.cores = parallel::detectCores())
-    
+
     params$tree_count[j] <- which.min(temp_model$cv.error)
     params$oob_mse[j] <- min(temp_model$cv.error)
     params$mspe[j] <- mean((this_test$Y - predict(temp_model, this_test,
@@ -276,19 +286,19 @@ for(i in 1:20){
                                                          type = 'response'))^2)
   }
   toc()
-  res_gbm_loop$data[i] <- list(params) 
-  
-  
-  # RF
+  res_gbm_loop$data[i] <- list(params)
+
+
+  # # RF
   tic()
   cluster %>%
     cluster_assign_value("this_train", this_train) %>%
     cluster_assign_value("this_test", this_test)
-  
+
   rf_data <- params_rf %>%
-    mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(rf_data))) %>%
-    partition(cluster_group, cluster = cluster) %>% 
-    mutate(rf_obj = pmap(list(ntree, mtry, replace, nodesize), 
+    mutate(cluster_group = rep_len(1:num_cores, length.out = nrow(params_rf))) %>%
+    partition(cluster_group, cluster = cluster) %>%
+    mutate(rf_obj = pmap(list(ntree, mtry, replace, nodesize),
                           ~ randomForest(x = this_train %>% select(-Y),
                                          y = this_train$Y,
                                          ntree = ..1,
@@ -297,24 +307,36 @@ for(i in 1:20){
                                          nodesize = ..4)),
            smse = map_dbl(rf_obj, ~ mean((this_train$Y - .$predicted)^2)),
            MSPE = map_dbl(rf_obj,
-                           ~ mean((this_test$Y - predict(., this_test, type = 'response'))))) %>%
+                           ~ mean((this_test$Y - predict(., this_test, type = 'response'))^2))) %>%
     collect() %>%
     select(-rf_obj)
-  
+
   toc()
-  res_rf_loop$data[i] <- list(rf_data) 
-  
+  res_rf_loop$data[i] <- list(rf_data)
+
 
   # NNet
+  # Convert back to numeric for scaling and nnet stuff
+  this_train <- this_train %>% mutate_all(as.numeric)
+  this_test <- this_test %>% mutate_all(as.numeric)
+  
+  # Not sure what to do about factor level variables
+  this_train_x <- rescale(this_train[, -1], this_train[, -1]) %>% mutate(Y = this_train$Y)
+  this_test_x <- rescale(this_test[, -1], this_train[, -1]) %>% mutate(Y = this_test$Y)
+  
+  cluster %>%
+    cluster_assign_value("this_train_x", this_train_x) %>%
+    cluster_assign_value("this_test_x", this_test_x)
+  
   tic()
   nnet_data <- params_nnet %>%
     mutate(cluster_group = rep_len(1:num_cores, length.out = dim(params_nnet)[1])) %>%
     partition(cluster_group, cluster = cluster) %>%
-    mutate(nnet_obj = pmap(list(size, decay, maxit), ~nnet(Y ~ ., data = this_train,
+    mutate(nnet_obj = pmap(list(size, decay, maxit), ~nnet(Y ~ ., data = this_train_x,
                                                            decay = ..2, size = ..1,
                                                           linout = TRUE, trace = FALSE, maxit = ..3)),
-           smse = map_dbl(nnet_obj, ~ .$value / nrow(this_train)),
-           MSPE = map_dbl(nnet_obj, ~ mean((this_test$Y - predict(., this_test))^2))) %>%
+           smse = map_dbl(nnet_obj, ~ .$value / nrow(this_train_x)),
+           MSPE = map_dbl(nnet_obj, ~ mean((this_test_x$Y - predict(., this_test_x))^2))) %>%
     collect() %>%
     select(-nnet_obj)
   
@@ -327,14 +349,53 @@ for(i in 1:20){
 }
 toc()
 
+# Wow the RF and NNet train so fast, its just the gbm thats slow
+# Probably could do a better job of parallelizing it for fast training time
 res_gbm_loop %>% unnest() %>% write.csv('gbm_project_progress.csv')
 res_rf_loop %>% unnest() %>% write.csv('rf_project_progress.csv')
 res_nnet_loop %>% unnest() %>% write.csv('nnet_project_progress.csv')
 
+# Check best model params for each
+res_gbm_loop %>% unnest() %>% group_by(n.trees, interaction.depth,
+                                       shrinkage, 
+                                       bag.fraction,
+                                       n.minobsinnode) %>%
+  summarize(avg_oob = mean(oob_mse),
+            avg_MSPE = mean(mspe)) %>%
+  arrange(avg_oob) %>% ungroup() %>% slice(1)
+
 # The best model for gbm is fit with 
-#n.trees interaction.depth n.minobsinnode shrinkage bag.fraction avg_oob sd_oob
-#<dbl>             <dbl>          <dbl>     <dbl>        <dbl>   <dbl>  <dbl>
-#  4000             7              5        0.01         0.85    1.53 0.0491
+#n.trees interaction.depth n.minobsinnode shrinkage bag.fraction avg_oob avg_MSPE
+#<dbl>             <dbl>          <dbl>     <dbl>        <dbl>   <dbl>  
+#  1000             4             1        0.01         0.85    1.44     1.27
+
+res_rf_loop %>% unnest() %>% group_by(ntree, mtry, replace, nodesize) %>%
+  summarize(avg_smse = mean(smse),
+            avg_MSPE = mean(MSPE)) %>%
+  ungroup() %>%
+  arrange(avg_MSPE) %>%
+  slice(1)
+
+# The best model with random forests is fit with
+#ntree  mtry replace nodesize avg_smse avg_MSPE
+#<dbl> <dbl> <lgl>      <dbl>    <dbl>    <dbl>
+# 4000    10 FALSE         20     1.45     1.27
+
+res_nnet_loop %>% unnest() %>% group_by(size, decay, maxit) %>%
+  summarize(avg_smse = mean(smse),
+            avg_MSPE = mean(MSPE)) %>%
+  ungroup() %>%
+  arrange(avg_MSPE) %>%
+  slice(1)
+
+# The best model with neural nets is fit with
+#size decay maxit avg_smse avg_MSPE
+#<dbl> <dbl> <dbl>    <dbl>    <dbl>
+#   10     1   2000     1.66     1.78
+
+# The neural net looks a little weak to me, probably need to train it more extensively
+# I forgot to scale the data, running again. Didn't really fix much. Might be because
+# previous work fit 100 neural nets per combo and chose the best one.
 
 rand_ind <- sample.int(nrow(train_split), nrow(train_split))
 train_split <- train_split[rand_ind,]
@@ -366,6 +427,7 @@ x <- setdiff(names(train_h2o), y)
 
 nfolds <- 5
 
+# GBM
 learn_rate_opt <- c(0.01, 0.1)
 max_depth_opt <- c(3, 5, 6)
 sample_rate_opt <- c(0.7, 0.8)
@@ -375,6 +437,7 @@ hyper_params_gbm <- list(learn_rate = learn_rate_opt,
                      sample_rate = sample_rate_opt,
                      col_sample_rate = col_sample_rate_opt) #min_rows is n.minobsinnode if I want to tune
 
+# RF
 max_depth_opt <- c(3, 5, 6)
 mtries_opt <- c(5, 7, 10)
 nbins_opt <- c(10, 20)
@@ -383,6 +446,24 @@ hyper_params_rf <- list(mtries = mtries_opt,
                         max_depth = max_depth_opt,
                         nbins = nbins_opt,
                         min_rows = min_rows_opt)
+
+# GLM
+lambda_opt <- list(lambda = seq(0, 1, by = 0.1))
+
+# Deep ANN
+epochs_opt <- c(5, 10, 20)
+activation_opt <- c("Tanh", "Rectifier", "RectifierWithDropout")
+rate_opt <- c(0.001, 0.005, 0.01, 0.1)
+momentum_start_opt <- c(0, 0.5)
+l1_opt <- c(0, 0.5, 1)
+l2_opt <- c(0, 0.5, 1)
+hyper_params_deep <- list(epochs = epochs_opt,
+                          activation = activation_opt,
+                          rate = rate_opt,
+                          momentum_start = momentum_start_opt,
+                          l1 = l1_opt,
+                          l2 = l2_opt)
+
 # Search_criteria will be used to explore the grid sapace defined above (when called in h2o.grid)
 # Default is Cartesian strategy which will search all combos. If using RandomDiscrete, make sure
 # to specify max_models and / or max_runtime_secs. These seem to be the only 2 options currently.
@@ -394,6 +475,7 @@ hyper_params_rf <- list(mtries = mtries_opt,
 search_criteria <- list(strategy = "Cartesian")
 
 # Automated grid fitting
+tic()
 gbm_grid <- h2o.grid(algorithm = "gbm",
                      grid_id = "gbm_grid_small",
                      x = x,
@@ -420,16 +502,39 @@ rf_grid <- h2o.grid(algorithm = "randomForest",
                     hyper_params = hyper_params_rf, # List to search
                     search_criteria = search_criteria)
 
+glm_grid <- h2o.grid(algorithm = "glm",
+                     grid_id = "glm_grid_small",
+                     x = x,
+                     y = y,
+                     training_fram = train_h2o,
+                     nfolds = nfolds,
+                     fold_assignment = "Modulo",
+                     keep_cross_validation_predictions = TRUE,
+                     hyper_params = lambda_opt,
+                     search_criteria = search_criteria)
 
+deep_grid <- h2o.grid(algorithm = "deeplearning",
+                      grid_id = "deep_grid_small",
+                      x = x,
+                      y = y,
+                      training_fram = train_h2o,
+                      nfolds = nfolds,
+                      fold_assignment = "Modulo",
+                      keep_cross_validation_predictions = TRUE,
+                      hyper_params = hyper_params_deep,
+                      search_criteria = search_criteria)
+toc()
+tic()
 ensemble <- h2o.stackedEnsemble(x = x,
                                 y = y,
                                 training_frame = train_h2o,
                                 validation_frame = test_h2o,
                                 model_id = "ensemble_gbm_rf_small",
-                                base_models = c(gbm_grid@model_ids, rf_grid@model_ids),
+                                base_models = c(gbm_grid@model_ids, rf_grid@model_ids,
+                                                glm_grid@model_ids, deep_grid@model_ids),
                                 metalearner_algorithm = "AUTO",
                                 metalearner_nfolds = 10) # Specify model_ids to include
-
+toc()
 # Lets see what the performance is like on this ensesmble, now that it has some rf as well
 mspe_rf_gbm_ensemble <- h2o.performance(ensemble, newdata = test_h2o)
 # Only 1.50 again, still not an improvement on the trained gbm
