@@ -138,7 +138,7 @@ rf_grid_test <- h2o.grid(algorithm = "randomForest",
                     x = x,
                     y = y,
                     training_frame = train_h2o,
-                    ntrees = 25,
+                    ntrees = 25, # Play around with this value
                     seed = 1,
                     nfolds = nfolds,
                     fold_assignment = "Modulo",
@@ -155,7 +155,7 @@ rf_ensemble_test <- h2o.stackedEnsemble(x = x,
                     metalearner_algorithm = "AUTO",
                     metalearner_nfolds = 10)
 
-perf <- h2o.performance(rf_ensemble_test, newdata = test_h2o) # 1.283 MSPE, 1.13 RMSE
+perf <- h2o.performance(rf_ensemble_test, newdata = test_h2o) # 1.283-1.298 area MSPE, 1.13 RMSE
 
 
 # Lets just explore the data a bit first
@@ -414,7 +414,7 @@ gbm_tuned_mspe <- mean((test_split$Y - predict(full_gbm, test_split,
 
 # Try to diversify the ensemble, just using lots of gbm may leave it weak
 h2o.shutdown()
-h2o.init(nthreads = -1, max_mem_size = '3G') # Default is 1.77 GB of memory, think before ensembling
+h2o.init(nthreads = -1, max_mem_size = "6g") # Default is 1.77 GB of memory, think before ensembling
 
 set.seed(46676352)
 train$set <- ifelse(runif(nrow(train)) > 0.75, 1, 2)
@@ -428,8 +428,8 @@ x <- setdiff(names(train_h2o), y)
 nfolds <- 5
 
 # GBM
-learn_rate_opt <- c(0.01, 0.1)
-max_depth_opt <- c(3, 5, 6)
+learn_rate_opt <- c(0.01, 0.1, 0.3)
+max_depth_opt <- c(1, 3, 5, 6)
 sample_rate_opt <- c(0.7, 0.8)
 col_sample_rate_opt <- c(0.7, 0.9)
 hyper_params_gbm <- list(learn_rate = learn_rate_opt,
@@ -438,10 +438,10 @@ hyper_params_gbm <- list(learn_rate = learn_rate_opt,
                      col_sample_rate = col_sample_rate_opt) #min_rows is n.minobsinnode if I want to tune
 
 # RF
-max_depth_opt <- c(3, 5, 6)
-mtries_opt <- c(5, 7, 10)
-nbins_opt <- c(10, 20)
-min_rows_opt <- c(1, 10, 20)
+max_depth_opt <- c(3, 5, 6, 9)
+mtries_opt <- c(3, 5, 7, 10)
+nbins_opt <- c(5, 10, 20)
+min_rows_opt <- c(1, 5, 10, 20)
 hyper_params_rf <- list(mtries = mtries_opt, 
                         max_depth = max_depth_opt,
                         nbins = nbins_opt,
@@ -452,7 +452,7 @@ lambda_opt <- list(lambda = seq(0, 1, by = 0.1))
 
 # Deep ANN
 epochs_opt <- c(5, 10, 20)
-activation_opt <- c("Tanh", "Rectifier", "RectifierWithDropout")
+activation_opt <- c("Tanh", "Rectifier")
 rate_opt <- c(0.001, 0.005, 0.01, 0.1)
 momentum_start_opt <- c(0, 0.5)
 l1_opt <- c(0, 0.5, 1)
@@ -481,7 +481,6 @@ gbm_grid <- h2o.grid(algorithm = "gbm",
                      x = x,
                      y = y,
                      training_frame = train_h2o,
-                     ntrees = 25,
                      seed = 1,
                      nfolds = nfolds,
                      fold_assignment = "Modulo",
@@ -523,7 +522,7 @@ deep_grid <- h2o.grid(algorithm = "deeplearning",
                       keep_cross_validation_predictions = TRUE,
                       hyper_params = hyper_params_deep,
                       search_criteria = search_criteria)
-toc()
+toc() # 1400 seconds to train
 tic()
 ensemble <- h2o.stackedEnsemble(x = x,
                                 y = y,
@@ -534,11 +533,12 @@ ensemble <- h2o.stackedEnsemble(x = x,
                                                 glm_grid@model_ids, deep_grid@model_ids),
                                 metalearner_algorithm = "AUTO",
                                 metalearner_nfolds = 10) # Specify model_ids to include
-toc()
+toc() # 220 seconds to combine
+
 # Lets see what the performance is like on this ensesmble, now that it has some rf as well
-mspe_rf_gbm_ensemble <- h2o.performance(ensemble, newdata = test_h2o)
-# Only 1.50 again, still not an improvement on the trained gbm
-# Also in current setup the AUTO metalearner seems to work best
+mspe_rf_gbm_ensemble <- h2o.performance(ensemble, newdata = test_h2o) # 20 seconds ish
+# 1.29 MSPE, 1.13 RMSE Now, not bad
+# Does not seem to offer any improvement. Investigate why.
 
 # Before trying another ensemble, scale variables to 0-1 and then use PCA
 scaled_train <- h2o.prcomp(train_h2o, x = x,
