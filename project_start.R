@@ -10,6 +10,10 @@ h2o.init(nthreads = -1, max_mem_size = '3G') # Default is 1.77 GB of memory, thi
 # Import the data
 train <- read_csv('Data2019.csv')
 
+# Sample plot
+# train %>%
+#   ggpairs()
+
 # Convert X1, X2, and X15 to factors
 train <- train %>% 
   mutate(X1 = as.factor(X1),
@@ -126,10 +130,12 @@ max_depth_opt <- c(3, 5, 6, 9)
 mtries_opt <- c(3, 5, 7, 10)
 nbins_opt <- c(5, 10, 20)
 min_rows_opt <- c(1, 5, 10, 20)
+ntrees_opt <- c(10, 25, 50, 100, 500)
 hyper_params_rf <- list(mtries = mtries_opt, 
                         max_depth = max_depth_opt,
                         nbins = nbins_opt,
-                        min_rows = min_rows_opt)
+                        min_rows = min_rows_opt,
+                        ntrees = ntrees_opt)
 
 search_criteria <- list(strategy = "Cartesian")
 
@@ -138,7 +144,6 @@ rf_grid_test <- h2o.grid(algorithm = "randomForest",
                     x = x,
                     y = y,
                     training_frame = train_h2o,
-                    ntrees = 25, # Play around with this value
                     seed = 1,
                     nfolds = nfolds,
                     fold_assignment = "Modulo",
@@ -156,7 +161,8 @@ rf_ensemble_test <- h2o.stackedEnsemble(x = x,
                     metalearner_nfolds = 10)
 
 perf <- h2o.performance(rf_ensemble_test, newdata = test_h2o) # 1.283-1.298 area MSPE, 1.13 RMSE
-
+# Consistent on both desktop and laptop
+# 1.265 now by using 10 trees and validation set, has variability
 
 # Lets just explore the data a bit first
 train_split <- train %>% filter(set == 2) %>% select(-set)
@@ -166,10 +172,26 @@ library(GGally)
 train_split %>% 
   ggpairs()
 
-# What does this plot look like after principle components?
-pca <- prcomp(train_split %>% select(-Y))
+cor(train_h2o) %>% View()
+# X13 and X14 are highly correlated, X11 and X12 are highly correlated, X14 and X13 are moderately correlated
+# with X10
 
-train_split_pca <- as.data.frame(cbind(train_split$Y, pca$x))
+# What does this plot look like after principle components?
+# Need to use a different type of pca because of factor variables
+library(FactoMineR)
+pca <- PCA(train_split %>% select(-Y), quali.sup = c(1,2,15)) # Not sure how to use for rotation yet
+summary(pca)
+
+# Try another package called homals, should help with non-linear PCA
+library(homals)
+data(senate)
+pca_round2 <- homals(as.data.frame(train_split %>% select(-Y)), active = TRUE,
+                     level = c("nominal", "nominal",
+                               rep("numerical", 12), "nominal"),
+                     ndim = 15)
+
+# I dont know what is going on, should not use
+train_split_pca <- as.data.frame(cbind(train_split$Y, pca_round2$scoremat))
 names(train_split_pca) <- names(train_split)
 
 test_split_pca <- as.data.frame(cbind(test_split$Y, predict(pca, test_split %>% select(-Y))))
